@@ -25,12 +25,23 @@ impl Plugin for LevelPlugin {
             // Set the background color.
             .add_plugins(LdtkPlugin)
             .insert_resource(LevelSelection::Index(0))
+            .register_ldtk_entity::<StartPosBundle>("Start_position")
             .register_ldtk_int_cell::<WallBundle>(1)
             .add_systems(Startup, setup_map)
             .add_systems(Update, camera_fit_inside_current_level)
             .add_systems(Update, spawn_wall_collision)
             ;
     }
+}
+
+#[derive(Default, Component)]
+struct StartPosition();
+
+#[derive(Default, Bundle, LdtkEntity)]
+pub struct StartPosBundle{
+    start:StartPosition,
+    #[sprite_sheet_bundle("sprites/human_running.png", 8.0, 8.0, 4, 1, 0.0, 0.0, 0)]
+    sprite_sheet: SpriteSheetBundle
 }
 
 fn setup_map(mut commands: Commands, asset_server: Res<AssetServer>) {
