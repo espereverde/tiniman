@@ -1,0 +1,9 @@
+({
+    "player.texture": TextureAtlas (
+            path: "sprites/human_running.png",
+            tile_size_x: 8.,
+            tile_size_y: 8.,
+            columns: 4,
+            rows: 2
+        ),
+})

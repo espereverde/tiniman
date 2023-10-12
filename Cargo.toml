@@ -8,8 +8,10 @@ resolver = "2"
 
 [dependencies]
 bevy = { version = "0.11.3"}
+bevy_asset_loader = {version = "*", features = ["2d", "standard_dynamic_assets"]}
 bevy_ecs_ldtk = "*"
 bevy_rapier2d = "*"
+bevy-inspector-egui= "*"
 
 
 # Enable a small amount of optimization in debug mode

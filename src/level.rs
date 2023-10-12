@@ -2,14 +2,22 @@ use bevy::prelude::*;
 use bevy_ecs_ldtk::prelude::*;
 use bevy_rapier2d::prelude::*;
 
+use crate::GameStates;
+use crate::asset_manager::PlayerAssets;
+use crate::characters::{CharacterBundle, Player};
+
 use std::collections::{HashMap, HashSet};
 
 const ASPECT_RATIO: f32 = 16. / 9.;
 
 pub struct LevelPlugin;
 
-#[derive(Component)]
-pub struct Player();
+
+/*#[derive(Bundle)]
+pub struct PlayerBundle{
+    player: Player,
+    a_sprite: AnimatedSprite
+}*/
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Component)]
 pub struct Wall;
@@ -28,9 +36,24 @@ impl Plugin for LevelPlugin {
             .register_ldtk_entity::<StartPosBundle>("Start_position")
             .register_ldtk_int_cell::<WallBundle>(1)
             .add_systems(Startup, setup_map)
+            .add_systems(OnEnter(GameStates::Running), spawn_player)
             .add_systems(Update, camera_fit_inside_current_level)
             .add_systems(Update, spawn_wall_collision)
             ;
+    }
+}
+
+fn spawn_player(
+    mut commands: Commands,
+    char_assets: Res<PlayerAssets>,
+    start_query: Query<(Entity, &Transform), Added<StartPosition>>
+){
+    if let Ok((start_id, start_transform)) = start_query.get_single(){
+        error!("Player");
+        commands.entity(start_id)
+            .insert(CharacterBundle::new("player", &char_assets))
+            .insert(Player{})
+            .insert(start_transform.clone());
     }
 }
 
@@ -39,9 +62,7 @@ struct StartPosition();
 
 #[derive(Default, Bundle, LdtkEntity)]
 pub struct StartPosBundle{
-    start:StartPosition,
-    #[sprite_sheet_bundle("sprites/human_running.png", 8.0, 8.0, 4, 1, 0.0, 0.0, 0)]
-    sprite_sheet: SpriteSheetBundle
+    start: StartPosition,
 }
 
 fn setup_map(mut commands: Commands, asset_server: Res<AssetServer>) {
