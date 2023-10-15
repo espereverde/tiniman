@@ -1,4 +1,5 @@
-use bevy::{prelude::*, utils::HashMap};
+use bevy::{prelude::*, utils::HashMap, transform::TransformSystem};
+use bevy_rapier2d::na::SimdBool;
 use bevy_rapier2d::prelude::*;
 
 use crate::asset_manager::PlayerAssets;
@@ -13,12 +14,16 @@ impl Plugin for CharacterPlugin {
         app
             .register_type::<Movement>()
             .add_systems(PreUpdate, process_player_input)
-            .add_systems( PreUpdate, (check_ground, apply_gravity).chain())
-            .add_systems(Update, sync_action_animation)
             .add_systems(Update, (
+                update_air_movement,
                 update_ground_movement,
                 apply_movement
             ).chain())
+            .add_systems(Update, sync_action_animation)
+            .add_systems(PostUpdate, (stop_on_bump, check_ground, ).chain()
+                .after(PhysicsSet::Writeback)
+                .before(TransformSystem::TransformPropagate)
+            )
         ;
     }
 }
@@ -66,7 +71,7 @@ pub struct Movement{
 
 const PLAYER_MOV: Movement = Movement{
     vel: Vec2::ZERO,
-    max_vel: Vec2 { x: 80., y: 200. },
+    max_vel: Vec2 { x: 80., y: 220. },
     forward_acc: 140.0,
     glide_acc: 140.0,
     brake_acc: 300.0
@@ -90,47 +95,67 @@ fn process_player_input(
 
 fn check_ground(
     mut command: Commands,
-    mut ground_query: Query<(Entity, &Movement, &KinematicCharacterControllerOutput, Option<&OnGround>, Option<&OnAir>)>
+    mut ground_query: Query<(Entity, &mut Movement, &KinematicCharacterControllerOutput, Option<&OnGround>, Option<&OnAir>)>
 )
 {
-    for (char_id, movement, output, op_ground, op_air) in ground_query.iter_mut(){
+    for (char_id, mut movement, output, op_ground, op_air) in ground_query.iter_mut(){
         if let Some(_) = op_ground{
             if !output.grounded { 
                 command.entity(char_id).insert(OnAir).remove::<OnGround>(); 
             }
         }
         if let Some(_) = op_air {
-            if output.grounded && movement.vel.y <= 0.0 {
+            if output.grounded && movement.vel.y < 0.0 {
                 error!("Grounded"); 
+                movement.vel.y = -1.0;
                 command.entity(char_id).insert(OnGround).remove::<OnAir>(); 
             }
         }
     }
 }
 
-fn apply_gravity(
+fn update_air_movement(
     time: Res<Time>,
-    mut move_query: Query<(&mut Movement, &mut CurrentAction), With<OnAir>>
+    mut move_query: Query<(&InputOrders, &mut Movement, &mut CurrentAction), With<OnAir>>
 )
 {
-    for (mut movement, mut c_action ) in move_query.iter_mut(){
+    for (orders, mut movement, mut c_action ) in move_query.iter_mut(){
             let mut next_action = c_action.0.clone();
+
+            if movement.vel.y > 0.0 && orders.keep_jump {
+                movement.vel.y += GRAVITY * time.delta_seconds() / 2.0;
+            }
             movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()).clamp(-movement.max_vel.y, movement.max_vel.y);
-            
+
             if movement.vel.y > 0.0 { next_action = CharacterActions::Jumping}
             else if movement.vel.y < 0.0 {next_action = CharacterActions::Falling}
+
+            //Acceleration on air is half the acceleration on ground
+            movement.vel.x += (movement.forward_acc / 2.0) * time.delta_seconds() * orders.horiz_dir;
 
             if next_action != c_action.0{
                 c_action.0 = next_action;
             }
     }
         
-
-        /* if output.effective_translation.x.abs() < 0.1{
-            movement.vel.x = 0.0;
-        } */
 }
 
+fn stop_on_bump(
+    mut move_query: Query<(&mut Movement, &KinematicCharacterControllerOutput)>
+)
+{
+    for (mut movement, kin_output) in move_query.iter_mut(){
+        if (kin_output.desired_translation.x - kin_output.effective_translation.x).abs() > 0.1{
+            movement.vel.x = 0.0;
+        }
+        //Only check collisions while going up. There was a glitch if we use .abs() like we did in the x axis.
+        //The character sometimes got stuck in a cliff upper corner
+        if (kin_output.desired_translation.y - kin_output.effective_translation.y)> 0.1{
+            movement.vel.y = -1.0;
+            error!("v_bump");
+        }
+    }
+}
 
 // System that controls the Player character from parses player input.
 /// In reads keypresses and modifies the player Entity's Speed component.
@@ -142,11 +167,11 @@ fn update_ground_movement(
         
         let mut next_action = c_action.0.clone();
 
-        if orders.do_jump {movement.vel.y = 200.0;}
+        if orders.do_jump {movement.vel.y = 160.0;}
         else{
-            movement.vel.y = -0.1;
-        // Get the current velocity direction. If character is not moving we take the input direction.
-        let vel_dir = 
+            //movement.vel.y = -0.1;
+            // Get the current velocity direction. If character is not moving we take the input direction.
+            let vel_dir = 
             if movement.vel.x == 0.0 { orders.horiz_dir }
             else { movement.vel.x.signum()};
 
@@ -239,8 +264,9 @@ impl CharacterBundle{
         Self { 
             ssheet,
             body: RigidBody::KinematicPositionBased, 
+            //collision: Collider::capsule(Vec2::NEG_Y, Vec2::Y, 3.0),
             collision: Collider::cuboid(3.0, 4.0), 
-            controller: KinematicCharacterController::default(),
+            controller: KinematicCharacterController{offset:CharacterLength::Absolute(0.3), ..default()},
             movement: PLAYER_MOV,
             action: CurrentAction(CharacterActions::Idle),
             animations,

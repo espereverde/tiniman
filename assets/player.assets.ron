@@ -4,6 +4,8 @@
             tile_size_x: 8.,
             tile_size_y: 8.,
             columns: 4,
-            rows: 3
+            rows: 3,
+            padding_x: Some(2.0),
+            padding_y: Some(2.0)
         ),
 })

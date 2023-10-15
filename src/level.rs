@@ -74,6 +74,7 @@ fn setup_map(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 #[allow(clippy::type_complexity)]
 pub fn camera_fit_inside_current_level(
+    mut window_query: Query<&mut Window>,
     mut camera_query: Query<
         (
             &mut bevy::render::camera::OrthographicProjection,
@@ -104,6 +105,9 @@ pub fn camera_fit_inside_current_level(
             if let Some(ldtk_level) = ldtk_levels.get(level_handle) {
                 let level = &ldtk_level.level;
                 if level_selection.is_match(&0, level) {
+
+                    let mut window = window_query.single_mut();
+
                     let level_ratio = level.px_wid as f32 / level.px_hei as f32;
                     orthographic_projection.viewport_origin = Vec2::ZERO;
                     if level_ratio > ASPECT_RATIO {
@@ -111,6 +115,7 @@ pub fn camera_fit_inside_current_level(
                         //let height = (level.px_hei as f32 / 9.).round() * 9.;
                         let height = level.px_hei as f32;
                         let width = height * ASPECT_RATIO;
+                        window.resolution.set(width*3.0, height*3.0);
                         orthographic_projection.scaling_mode =
                             bevy::render::camera::ScalingMode::Fixed { width, height };
                         camera_transform.translation.x =
@@ -122,6 +127,7 @@ pub fn camera_fit_inside_current_level(
                         //let width = (level.px_wid as f32 / 16.).round() * 16.;
                         let width = level.px_wid as f32;
                         let height = width / ASPECT_RATIO;
+                        window.resolution.set(width*3.0, height*3.0);
                         orthographic_projection.scaling_mode =
                             bevy::render::camera::ScalingMode::Fixed { width, height };
                         camera_transform.translation.y =
