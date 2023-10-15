@@ -11,7 +11,7 @@ impl Plugin for AnimationPlugin{
     fn build(&self, app: &mut App){
         app
             .add_event::<AnimationEnded>()
-            .add_systems(Update, advance_animation);
+            .add_systems(Update, (advance_animation).chain());
     }
 
 }
@@ -58,9 +58,19 @@ impl CompAnimation{
         }
     }
 
+    pub fn get_end(&self) -> usize{
+        match self{
+            Self::Segment { start:_, end, timer:_, repeats:_ } => *end,
+            Self::Sequence { components, cindex:_, repeats:_} => components[0].get_end()
+        }
+    }
+
     fn advance_frame(&mut self, spritesheet: &mut TextureAtlasSprite, dt: Duration)-> bool{
         match self{
             Self::Segment { start, end, timer, repeats } => {
+                if spritesheet.index < *start || spritesheet.index > *end{
+                    spritesheet.index = *start;
+                } 
                 let mut finished = false;
                 timer.tick(dt);
                 if timer.just_finished(){
@@ -145,10 +155,21 @@ impl AnimatedSprite{
 #[derive(Event)]
 pub struct AnimationEnded( pub Entity);
 
-pub fn advance_animation(time: Res<Time>, mut ev_ended: EventWriter<AnimationEnded>, mut q_animated: Query<(Entity, &mut CompAnimation, &mut TextureAtlasSprite)>){
+fn advance_animation(time: Res<Time>, mut ev_ended: EventWriter<AnimationEnded>, mut q_animated: Query<(Entity, &mut CompAnimation, &mut TextureAtlasSprite)>){
     for (id, mut animation, mut sheet) in &mut q_animated.iter_mut() {
         if animation.advance_frame(&mut sheet, time.delta()){
             ev_ended.send(AnimationEnded(id));
         }
     }
 }
+
+/* fn setup_animation(
+    mut query: Query<(&CompAnimation, &mut TextureAtlasSprite), Changed<CompAnimation>>
+){
+    for (animation, mut sprite) in query.iter_mut(){
+        error!("asdf");
+        if sprite.index < animation.get_start() || sprite.index > animation.get_end(){
+            sprite.index = animation.get_start();
+        }
+    }
+} */
