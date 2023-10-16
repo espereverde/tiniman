@@ -82,7 +82,7 @@ pub fn camera_fit_inside_current_level(
         ),
         Without<Player>,
     >,
-    player_query: Query<&Transform, With<Player>>,
+    //player_query: Query<&Transform, With<Player>>,
     level_query: Query<
         (&Transform, &Handle<LdtkLevel>),
         (Without<OrthographicProjection>, Without<Player>),

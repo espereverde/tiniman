@@ -1,5 +1,4 @@
 use bevy::{prelude::*, utils::HashMap, transform::TransformSystem};
-use bevy_rapier2d::na::SimdBool;
 use bevy_rapier2d::prelude::*;
 
 use crate::asset_manager::PlayerAssets;
@@ -20,7 +19,7 @@ impl Plugin for CharacterPlugin {
                 apply_movement
             ).chain())
             .add_systems(Update, sync_action_animation)
-            .add_systems(PostUpdate, (stop_on_bump, check_ground, ).chain()
+            .add_systems(PostUpdate, (stop_on_bump, check_ground, debug_collisions).chain()
                 .after(PhysicsSet::Writeback)
                 .before(TransformSystem::TransformPropagate)
             )
@@ -93,27 +92,6 @@ fn process_player_input(
     }
 }
 
-fn check_ground(
-    mut command: Commands,
-    mut ground_query: Query<(Entity, &mut Movement, &KinematicCharacterControllerOutput, Option<&OnGround>, Option<&OnAir>)>
-)
-{
-    for (char_id, mut movement, output, op_ground, op_air) in ground_query.iter_mut(){
-        if let Some(_) = op_ground{
-            if !output.grounded { 
-                command.entity(char_id).insert(OnAir).remove::<OnGround>(); 
-            }
-        }
-        if let Some(_) = op_air {
-            if output.grounded && movement.vel.y < 0.0 {
-                error!("Grounded"); 
-                movement.vel.y = -1.0;
-                command.entity(char_id).insert(OnGround).remove::<OnAir>(); 
-            }
-        }
-    }
-}
-
 fn update_air_movement(
     time: Res<Time>,
     mut move_query: Query<(&InputOrders, &mut Movement, &mut CurrentAction), With<OnAir>>
@@ -138,23 +116,6 @@ fn update_air_movement(
             }
     }
         
-}
-
-fn stop_on_bump(
-    mut move_query: Query<(&mut Movement, &KinematicCharacterControllerOutput)>
-)
-{
-    for (mut movement, kin_output) in move_query.iter_mut(){
-        if (kin_output.desired_translation.x - kin_output.effective_translation.x).abs() > 0.1{
-            movement.vel.x = 0.0;
-        }
-        //Only check collisions while going up. There was a glitch if we use .abs() like we did in the x axis.
-        //The character sometimes got stuck in a cliff upper corner
-        if (kin_output.desired_translation.y - kin_output.effective_translation.y)> 0.1{
-            movement.vel.y = -1.0;
-            error!("v_bump");
-        }
-    }
 }
 
 // System that controls the Player character from parses player input.
@@ -215,6 +176,63 @@ fn apply_movement(
         controller.translation = Some(velocity.vel * time.delta_seconds())
     }
 }
+
+fn stop_on_bump(
+    mut move_query: Query<(&mut Movement, &KinematicCharacterControllerOutput)>
+)
+{
+    for (mut movement, kin_output) in move_query.iter_mut(){
+        if (kin_output.desired_translation.x - kin_output.effective_translation.x).abs() > 0.1{
+            movement.vel.x = 0.0;
+        }
+        //Only check collisions while going up. There was a glitch if we use .abs() like we did in the x axis.
+        //The character sometimes got stuck in a cliff upper corner
+        if (kin_output.desired_translation.y - kin_output.effective_translation.y)> 0.1{
+            movement.vel.y = -1.0;
+            error!("v_bump");
+        }
+    }
+}
+
+fn check_ground(
+    mut command: Commands,
+    mut ground_query: Query<(Entity, &mut Movement, &KinematicCharacterControllerOutput, Option<&OnGround>, Option<&OnAir>)>
+)
+{
+    for (char_id, mut movement, output, op_ground, op_air) in ground_query.iter_mut(){
+        if let Some(_) = op_ground{
+            if !output.grounded { 
+                command.entity(char_id).insert(OnAir).remove::<OnGround>(); 
+            }
+        }
+        if let Some(_) = op_air {
+            if output.grounded && movement.vel.y < 0.0 {
+                error!("Grounded"); 
+                movement.vel.y = -1.0;
+                command.entity(char_id).insert(OnGround).remove::<OnAir>(); 
+            }
+        }
+    }
+}
+
+fn debug_collisions(
+    mut gizmos: Gizmos,
+    mut controller_outputs: Query<(&KinematicCharacterControllerOutput, &GlobalTransform)>
+) {
+    for (output, transform) in controller_outputs.iter_mut() {
+        for collision in &output.collisions {
+            // Collision in map space
+            let contact_point = collision.toi.witness1;
+            let normal = collision.toi.normal1;
+            gizmos.line_2d(contact_point, contact_point + normal*10.0, Color::RED);
+            // Collision in character space
+            let contact_point = collision.toi.witness2 + transform.translation().truncate();
+            let normal = collision.toi.normal2;
+            gizmos.line_2d(contact_point, contact_point + normal*10.0, Color::GREEN);
+        }
+    }
+}
+
 
 fn sync_action_animation(
     mut commands: Commands,
