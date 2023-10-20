@@ -37,8 +37,8 @@ impl Plugin for CharacterPlugin {
             ).in_set(CharacterSet::PrepareMovement))
             .add_systems( Update, apply_movement.in_set(CharacterSet::ApplyMovement))
 
-            .add_systems(PostUpdate, (check_wall, check_ground, stop_on_bump).in_set(CharacterSet::UpdateMode))
-            .add_systems(PostUpdate, (sync_action_animation, sync_sprite_face_dir, debug_collisions).in_set(CharacterSet::SyncSprite))
+            .add_systems(PostUpdate, (check_into_wall, check_outo_wall, check_ground, stop_on_bump).in_set(CharacterSet::UpdateMode))
+            .add_systems(PostUpdate, (sync_action_animation, sync_sprite_face_dir, /* debug_collisions */).in_set(CharacterSet::SyncSprite))
         ;
     }
 }
@@ -250,7 +250,7 @@ fn stop_on_bump(
 {
     for (mut movement, kin_output) in move_query.iter_mut(){
         if (kin_output.desired_translation.x - kin_output.effective_translation.x).abs() > 0.1{
-            movement.vel.x = 0.0;
+            movement.vel.x = 0.1 * kin_output.desired_translation.x.signum();
         }
         //Only check collisions while going up. There was a glitch if we use .abs() like we did in the x axis.
         //The character sometimes got stuck in a cliff upper corner
@@ -282,11 +282,14 @@ fn check_ground(
     }
 }
 
-fn check_wall(
+fn check_into_wall(
     mut commands: Commands, 
-    mut wall_query: Query<(Entity, &Movement, &KinematicCharacterControllerOutput, &mut Facing, &mut CharacterAction), Or<(&OnAir, &OnWall)>>
+    mut wall_query: Query<(Entity, &Movement, &KinematicCharacterControllerOutput, &mut Facing, &mut CharacterAction),
+        With<OnAir>>
 ){
-    for (char_id, movement, output, mut face_dir, mut action) in wall_query.iter_mut(){
+    for (char_id, movement, output,
+         mut face_dir, mut action
+    ) in wall_query.iter_mut(){
         for collision in output.collisions.iter(){
             if output.grounded && movement.vel.y < 0.0{ 
                 commands.entity(char_id).insert(OnGround).remove::<OnAir>().remove::<OnWall>(); 
@@ -296,7 +299,7 @@ fn check_wall(
                 commands.entity(char_id).insert(OnWall).remove::<OnAir>();
                 face_dir.set_dir(Facing::Left);
                 *action = CharacterAction::Sliding;
-                error!("start slide");
+                error!("start slide right");
             // Collision on the left side 
             }else if collision.toi.normal2.x < -0.8 && movement.vel.x < 0.0{
                 commands.entity(char_id).insert(OnWall).remove::<OnAir>(); 
@@ -304,9 +307,34 @@ fn check_wall(
                 *action = CharacterAction::Sliding;
                 error!("start slide");
             }
-            /* else if collision.toi.normal2.x > 0.8 && movement.vel.x < 0.0{
-                commands.entity(char_id).insert(OnWall).remove::<OnAir>(); 
-            } */
+        }
+    }
+}
+
+fn check_outo_wall(
+    mut commands: Commands, 
+    rapier_context: Res<RapierContext>,
+    mut wall_query: Query<(Entity, &Movement, &GlobalTransform, &KinematicCharacterControllerOutput, &Facing, &mut CharacterAction),
+        With<OnWall>>
+){
+    for (char_id, movement, g_transform, output,
+         mut face_dir, mut action
+    ) in wall_query.iter_mut(){
+        
+        let char_pos = g_transform.translation().truncate();
+        if output.grounded && movement.vel.y < 0.0{ 
+            commands.entity(char_id).insert(OnGround).remove::<OnWall>(); 
+        }
+
+        let ray_dir = match face_dir{
+            Facing::Right => Vec2::NEG_X,
+            Facing::Left => Vec2::X
+        };
+                
+        if let None = rapier_context.cast_ray(char_pos, ray_dir, 3.5, true, QueryFilter::default().exclude_rigid_body(char_id)){
+            commands.entity(char_id).insert(OnAir).remove::<OnWall>();
+            //*action = CharacterAction::Sliding;
+            error!("end slide");
         }
     }
 }
