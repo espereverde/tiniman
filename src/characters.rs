@@ -392,7 +392,7 @@ impl CharacterBundle{
             //collision: Collider::capsule(Vec2::NEG_Y, Vec2::Y, 3.0),
             collision: Collider::cuboid(3.0, 4.0), 
             controller: KinematicCharacterController{
-                offset:CharacterLength::Absolute(0.6),
+                offset:CharacterLength::Absolute(0.4),
                 
                  ..default()},
             movement: PLAYER_MOV,
