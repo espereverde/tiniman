@@ -33,7 +33,7 @@ fn main() {
         //.init_collection::<CharacterAssets>()
         .add_plugins(WorldInspectorPlugin::new())
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(8.0))
-        .add_plugins(RapierDebugRenderPlugin::default())
+        //.add_plugins(RapierDebugRenderPlugin::default())
         .add_plugins(AssetManagerPluging)
         .add_plugins(AnimationPlugin)
         .add_plugins(CharacterPlugin)

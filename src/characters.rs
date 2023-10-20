@@ -1,3 +1,4 @@
+use bevy::transform::commands;
 use bevy::{prelude::*, utils::HashMap, transform::TransformSystem};
 use bevy_rapier2d::prelude::*;
 
@@ -16,10 +17,11 @@ impl Plugin for CharacterPlugin {
             .add_systems(Update, (
                 update_air_movement,
                 update_ground_movement,
+                update_wall_movement,
                 apply_movement
             ).chain())
             .add_systems(Update, sync_action_animation)
-            .add_systems(PostUpdate, (stop_on_bump, check_ground, debug_collisions).chain()
+            .add_systems(PostUpdate, (check_wall, stop_on_bump, check_ground, debug_collisions ).chain()
                 .after(PhysicsSet::Writeback)
                 .before(TransformSystem::TransformPropagate)
             )
@@ -34,14 +36,24 @@ struct OnGround;
 struct OnAir;
 
 #[derive(Debug, Component)]
+struct OnWall;
+
+#[derive(Debug, Component)]
 pub struct Player();
+
+#[derive(Debug, PartialEq, Eq, Component)]
+pub enum Facing{
+    Left,
+    Right
+}
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum CharacterActions{
     Idle,
     Running,
     Jumping,
-    Falling
+    Falling,
+    Sliding
 }
 
 #[derive(Debug, Component)]
@@ -100,10 +112,12 @@ fn update_air_movement(
     for (orders, mut movement, mut c_action ) in move_query.iter_mut(){
             let mut next_action = c_action.0.clone();
 
-            if movement.vel.y > 0.0 && orders.keep_jump {
-                movement.vel.y += GRAVITY * time.delta_seconds() / 2.0;
+            if movement.vel.y > 0.0 && !orders.keep_jump {
+                movement.vel.y -= GRAVITY * time.delta_seconds();
             }
-            movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()).clamp(-movement.max_vel.y, movement.max_vel.y);
+            else{
+                movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()/2.0).clamp(-movement.max_vel.y, movement.max_vel.y);
+            }
 
             if movement.vel.y > 0.0 { next_action = CharacterActions::Jumping}
             else if movement.vel.y < 0.0 {next_action = CharacterActions::Falling}
@@ -116,6 +130,34 @@ fn update_air_movement(
             }
     }
         
+}
+
+fn update_wall_movement(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut player_query: Query<(Entity, &InputOrders, &mut CurrentAction, &mut Movement), (With<Player>, With<OnWall>)>
+){
+    for (char_id, orders, mut action, mut movement) in player_query.iter_mut(){
+        if orders.do_jump{
+            movement.vel.x = 20.0;
+            movement.vel.y = 120.0;
+            commands.entity(char_id).remove::<OnWall>().insert(OnAir);
+        }
+        else{
+            movement.vel.x = 0.0;
+            if movement.vel.y < 0.0{
+                movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()/4.0).clamp(-movement.max_vel.y/4.0, movement.max_vel.y);
+            }
+            else{
+                if orders.keep_jump{ movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()/2.0).clamp(-movement.max_vel.y/4.0, movement.max_vel.y); }
+                else{ movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()).clamp(-movement.max_vel.y/4.0, movement.max_vel.y); }
+            }
+
+            if action.0 != CharacterActions::Sliding{
+                action.0 = CharacterActions::Sliding;
+            }
+        }
+    }
 }
 
 // System that controls the Player character from parses player input.
@@ -133,8 +175,8 @@ fn update_ground_movement(
             //movement.vel.y = -0.1;
             // Get the current velocity direction. If character is not moving we take the input direction.
             let vel_dir = 
-            if movement.vel.x == 0.0 { orders.horiz_dir }
-            else { movement.vel.x.signum()};
+                if movement.vel.x == 0.0 { orders.horiz_dir }
+                else { movement.vel.x.signum()};
 
             if orders.horiz_dir == 0.0 && movement.vel.x.abs() < 1.0 { 
                 movement.vel.x = 0.0;
@@ -215,6 +257,29 @@ fn check_ground(
     }
 }
 
+fn check_wall(
+    mut commands: Commands, 
+    mut wall_query: Query<(Entity, &mut Movement, &KinematicCharacterControllerOutput), Or<(&OnAir, &OnWall)>>
+){
+    for (char_id, mut movement, output) in wall_query.iter_mut(){
+        for collision in output.collisions.iter(){
+            if output.grounded && movement.vel.y < 0.0{ 
+                commands.entity(char_id).insert(OnGround).remove::<OnAir>().remove::<OnWall>(); 
+            }
+            // Collision on the right side
+            if collision.toi.normal2.x > 0.8 && movement.vel.x > 0.0{
+                commands.entity(char_id).insert(OnWall).remove::<OnAir>();
+            // Collision on the left side 
+            }else if collision.toi.normal2.x < -0.8 && movement.vel.x < 0.0{
+                commands.entity(char_id).insert(OnWall).remove::<OnAir>(); 
+            }
+            /* else if collision.toi.normal2.x > 0.8 && movement.vel.x < 0.0{
+                commands.entity(char_id).insert(OnWall).remove::<OnAir>(); 
+            } */
+        }
+    }
+}
+
 fn debug_collisions(
     mut gizmos: Gizmos,
     mut controller_outputs: Query<(&KinematicCharacterControllerOutput, &GlobalTransform)>
@@ -256,6 +321,7 @@ pub struct CharacterBundle{
     controller: KinematicCharacterController,
     movement: Movement,
     action: CurrentAction,
+    facing: Facing,
     animations: ActionAnimations,
     grounded: OnGround,
     orders: InputOrders
@@ -277,6 +343,7 @@ impl CharacterBundle{
         animations.map.insert(CharacterActions::Running, CompAnimation::new_segment(4, 7, 8.0, 0));
         animations.map.insert(CharacterActions::Jumping, CompAnimation::new_segment(8, 8, 1.0, 0));
         animations.map.insert(CharacterActions::Falling, CompAnimation::new_segment(9, 9, 1.0, 0));
+        animations.map.insert(CharacterActions::Sliding, CompAnimation::new_segment( 16, 16, 1.0, 0));
         
 
         Self { 
@@ -284,8 +351,12 @@ impl CharacterBundle{
             body: RigidBody::KinematicPositionBased, 
             //collision: Collider::capsule(Vec2::NEG_Y, Vec2::Y, 3.0),
             collision: Collider::cuboid(3.0, 4.0), 
-            controller: KinematicCharacterController{offset:CharacterLength::Absolute(0.3), ..default()},
+            controller: KinematicCharacterController{
+                offset:CharacterLength::Absolute(0.6),
+                
+                 ..default()},
             movement: PLAYER_MOV,
+            facing: Facing::Right,
             action: CurrentAction(CharacterActions::Idle),
             animations,
             grounded: OnGround,
