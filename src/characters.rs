@@ -7,24 +7,38 @@ use crate::animation::CompAnimation;
 
 const GRAVITY: f32 = 700.0;
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone, SystemSet)]
+pub enum CharacterSet{
+    PrepareMovement,
+    ApplyMovement,
+    UpdateMode,
+    SyncSprite
+}
+
 pub struct CharacterPlugin;
 
 impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app
             .register_type::<Movement>()
+
+            .configure_sets(Update, (CharacterSet::PrepareMovement, CharacterSet::ApplyMovement).chain())
+            .configure_sets(PostUpdate, (CharacterSet::UpdateMode,CharacterSet::SyncSprite)
+                .chain()
+                .after(PhysicsSet::Writeback)
+                .before(TransformSystem::TransformPropagate)
+            )
+
             .add_systems(PreUpdate, process_player_input)
             .add_systems(Update, (
                 update_air_movement,
                 update_ground_movement,
                 update_wall_movement,
-                apply_movement
-            ).chain())
-            .add_systems(Update, sync_action_animation)
-            .add_systems(PostUpdate, (check_wall, stop_on_bump, check_ground, debug_collisions ).chain()
-                .after(PhysicsSet::Writeback)
-                .before(TransformSystem::TransformPropagate)
-            )
+            ).in_set(CharacterSet::PrepareMovement))
+            .add_systems( Update, apply_movement.in_set(CharacterSet::ApplyMovement))
+
+            .add_systems(PostUpdate, (check_wall, check_ground, stop_on_bump).in_set(CharacterSet::UpdateMode))
+            .add_systems(PostUpdate, (sync_action_animation, sync_sprite_face_dir, debug_collisions).in_set(CharacterSet::SyncSprite))
         ;
     }
 }
@@ -47,8 +61,16 @@ pub enum Facing{
     Right
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum CharacterActions{
+impl Facing{
+    fn set_dir(&mut self, new_dir: Facing){
+        if *self != new_dir{
+            *self = new_dir;
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Component)]
+pub enum CharacterAction{
     Idle,
     Running,
     Jumping,
@@ -56,12 +78,13 @@ pub enum CharacterActions{
     Sliding
 }
 
-#[derive(Debug, Component)]
-pub struct CurrentAction(CharacterActions);
+
+/* #[derive(Debug, Component)]
+pub struct CurrentAction(CharacterAction); */
 
 #[derive(Debug, Component)]
 pub struct ActionAnimations{
-    map: HashMap<CharacterActions, CompAnimation>
+    map: HashMap<CharacterAction, CompAnimation>
 }
 
 #[derive(Debug, Component, Reflect, Default)]
@@ -106,11 +129,11 @@ fn process_player_input(
 
 fn update_air_movement(
     time: Res<Time>,
-    mut move_query: Query<(&InputOrders, &mut Movement, &mut CurrentAction), With<OnAir>>
+    mut move_query: Query<(&InputOrders, &mut Movement, &mut CharacterAction), With<OnAir>>
 )
 {
     for (orders, mut movement, mut c_action ) in move_query.iter_mut(){
-            let mut next_action = c_action.0.clone();
+            let mut next_action = c_action.clone();
 
             if movement.vel.y > 0.0 && !orders.keep_jump {
                 movement.vel.y -= GRAVITY * time.delta_seconds();
@@ -119,15 +142,14 @@ fn update_air_movement(
                 movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()/2.0).clamp(-movement.max_vel.y, movement.max_vel.y);
             }
 
-            if movement.vel.y > 0.0 { next_action = CharacterActions::Jumping}
-            else if movement.vel.y < 0.0 {next_action = CharacterActions::Falling}
+            if movement.vel.y > 0.0 { next_action = CharacterAction::Jumping}
+            else if movement.vel.y < 0.0 {next_action = CharacterAction::Falling}
 
             //Acceleration on air is half the acceleration on ground
             movement.vel.x += (movement.forward_acc / 2.0) * time.delta_seconds() * orders.horiz_dir;
 
-            if next_action != c_action.0{
-                c_action.0 = next_action;
-            }
+            //Change character action if needed
+            if *c_action != next_action { *c_action = next_action; }
     }
         
 }
@@ -135,11 +157,15 @@ fn update_air_movement(
 fn update_wall_movement(
     mut commands: Commands,
     time: Res<Time>,
-    mut player_query: Query<(Entity, &InputOrders, &mut CurrentAction, &mut Movement), (With<Player>, With<OnWall>)>
+    mut player_query: Query<(Entity, &InputOrders, &Facing, &mut CharacterAction, &mut Movement), (With<Player>, With<OnWall>)>
 ){
-    for (char_id, orders, mut action, mut movement) in player_query.iter_mut(){
+    for (char_id, orders, face_dir, mut action, mut movement) in player_query.iter_mut(){
         if orders.do_jump{
-            movement.vel.x = 20.0;
+            if *face_dir == Facing::Right{
+                movement.vel.x = 40.0;}
+            else{
+                movement.vel.x = -40.0;
+            }
             movement.vel.y = 120.0;
             commands.entity(char_id).remove::<OnWall>().insert(OnAir);
         }
@@ -153,9 +179,8 @@ fn update_wall_movement(
                 else{ movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()).clamp(-movement.max_vel.y/4.0, movement.max_vel.y); }
             }
 
-            if action.0 != CharacterActions::Sliding{
-                action.0 = CharacterActions::Sliding;
-            }
+            //Change character action if needed
+            if *action != CharacterAction::Sliding { *action = CharacterAction::Sliding; }
         }
     }
 }
@@ -164,11 +189,11 @@ fn update_wall_movement(
 /// In reads keypresses and modifies the player Entity's Speed component.
 fn update_ground_movement(
     time: Res<Time>,
-    mut player_query: Query<(&InputOrders, &mut CurrentAction, &mut Movement, &mut TextureAtlasSprite), (With<Player>, With<OnGround>)>
+    mut player_query: Query<(&InputOrders, &mut CharacterAction, &mut Movement, &mut Facing), (With<Player>, With<OnGround>)>
 ) {
-    if let Some((orders, mut c_action, mut movement, mut sprite)) = player_query.iter_mut().next() {
+    if let Some((orders, mut c_action, mut movement, mut face_dir)) = player_query.iter_mut().next() {
         
-        let mut next_action = c_action.0.clone();
+        let mut next_action = c_action.clone();
 
         if orders.do_jump {movement.vel.y = 160.0;}
         else{
@@ -180,32 +205,32 @@ fn update_ground_movement(
 
             if orders.horiz_dir == 0.0 && movement.vel.x.abs() < 1.0 { 
                 movement.vel.x = 0.0;
-                next_action = CharacterActions::Idle;
+                next_action = CharacterAction::Idle;
             }
             //If no input direction the character is gliding and we slowly reduce its velocity
             else if orders.horiz_dir == 0.0 {
                 movement.vel.x -= movement.glide_acc * time.delta_seconds() * vel_dir;
-                next_action = CharacterActions::Running;
+                next_action = CharacterAction::Running;
             }//If both directions coincide we use the forward acceleration
             else if orders.horiz_dir == vel_dir {
                 movement.vel.x += movement.forward_acc * time.delta_seconds() * orders.horiz_dir;
-                next_action = CharacterActions::Running;
+                next_action = CharacterAction::Running;
             //If directions are different we use the brake acceleration
             } else{
                 movement.vel.x += movement.brake_acc * time.delta_seconds() * orders.horiz_dir;
-                next_action = CharacterActions::Running;
+                next_action = CharacterAction::Running;
             }
         }
         //Clamp velocity
         movement.vel.x = movement.vel.x.clamp(-movement.max_vel.x, movement.max_vel.x);
         
         //Change character action if needed
-        if c_action.0 != next_action { c_action.0 = next_action; }
+        if *c_action != next_action { *c_action = next_action; }
 
         if orders.horiz_dir == 1.0 {
-            sprite.flip_x = false;
+            face_dir.set_dir(Facing::Right)
         }else if orders.horiz_dir == -1.0{
-            sprite.flip_x = true;
+            face_dir.set_dir(Facing::Left)
         }
     }
 }
@@ -259,9 +284,9 @@ fn check_ground(
 
 fn check_wall(
     mut commands: Commands, 
-    mut wall_query: Query<(Entity, &mut Movement, &KinematicCharacterControllerOutput), Or<(&OnAir, &OnWall)>>
+    mut wall_query: Query<(Entity, &Movement, &KinematicCharacterControllerOutput, &mut Facing, &mut CharacterAction), Or<(&OnAir, &OnWall)>>
 ){
-    for (char_id, mut movement, output) in wall_query.iter_mut(){
+    for (char_id, movement, output, mut face_dir, mut action) in wall_query.iter_mut(){
         for collision in output.collisions.iter(){
             if output.grounded && movement.vel.y < 0.0{ 
                 commands.entity(char_id).insert(OnGround).remove::<OnAir>().remove::<OnWall>(); 
@@ -269,9 +294,15 @@ fn check_wall(
             // Collision on the right side
             if collision.toi.normal2.x > 0.8 && movement.vel.x > 0.0{
                 commands.entity(char_id).insert(OnWall).remove::<OnAir>();
+                face_dir.set_dir(Facing::Left);
+                *action = CharacterAction::Sliding;
+                error!("start slide");
             // Collision on the left side 
             }else if collision.toi.normal2.x < -0.8 && movement.vel.x < 0.0{
                 commands.entity(char_id).insert(OnWall).remove::<OnAir>(); 
+                face_dir.set_dir(Facing::Right);
+                *action = CharacterAction::Sliding;
+                error!("start slide");
             }
             /* else if collision.toi.normal2.x > 0.8 && movement.vel.x < 0.0{
                 commands.entity(char_id).insert(OnWall).remove::<OnAir>(); 
@@ -301,14 +332,23 @@ fn debug_collisions(
 
 fn sync_action_animation(
     mut commands: Commands,
-    anim_query: Query<(Entity, &CurrentAction, &ActionAnimations), Changed<CurrentAction>>
+    anim_query: Query<(Entity, &CharacterAction, &ActionAnimations), Changed<CharacterAction>>
 )
 {
     for (entity_id, action, animation_map) in anim_query.iter(){
         error!("{:?}", action);
-        if let Some(anim) = animation_map.map.get(&action.0){
+        if let Some(anim) = animation_map.map.get(action){
             commands.entity(entity_id).insert(anim.clone());
         }
+    }
+}
+
+fn sync_sprite_face_dir(
+    mut query: Query<(&Facing, &mut TextureAtlasSprite), Changed<Facing>>
+)
+{
+    for (face_dir, mut sprite) in query.iter_mut(){
+        sprite.flip_x = (*face_dir == Facing::Left);
     }
 }
 
@@ -320,7 +360,7 @@ pub struct CharacterBundle{
     collision: Collider,
     controller: KinematicCharacterController,
     movement: Movement,
-    action: CurrentAction,
+    action: CharacterAction,
     facing: Facing,
     animations: ActionAnimations,
     grounded: OnGround,
@@ -339,11 +379,11 @@ impl CharacterBundle{
         };
 
         let mut animations = ActionAnimations{ map: HashMap::new() };
-        animations.map.insert(CharacterActions::Idle, CompAnimation::new_segment(0, 2, 2.0, 0));
-        animations.map.insert(CharacterActions::Running, CompAnimation::new_segment(4, 7, 8.0, 0));
-        animations.map.insert(CharacterActions::Jumping, CompAnimation::new_segment(8, 8, 1.0, 0));
-        animations.map.insert(CharacterActions::Falling, CompAnimation::new_segment(9, 9, 1.0, 0));
-        animations.map.insert(CharacterActions::Sliding, CompAnimation::new_segment( 16, 16, 1.0, 0));
+        animations.map.insert(CharacterAction::Idle, CompAnimation::new_segment(0, 2, 2.0, 0));
+        animations.map.insert(CharacterAction::Running, CompAnimation::new_segment(4, 7, 8.0, 0));
+        animations.map.insert(CharacterAction::Jumping, CompAnimation::new_segment(8, 8, 1.0, 0));
+        animations.map.insert(CharacterAction::Falling, CompAnimation::new_segment(9, 9, 1.0, 0));
+        animations.map.insert(CharacterAction::Sliding, CompAnimation::new_segment( 16, 16, 1.0, 0));
         
 
         Self { 
@@ -357,7 +397,7 @@ impl CharacterBundle{
                  ..default()},
             movement: PLAYER_MOV,
             facing: Facing::Right,
-            action: CurrentAction(CharacterActions::Idle),
+            action: CharacterAction::Idle,
             animations,
             grounded: OnGround,
             orders: InputOrders::default()

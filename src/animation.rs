@@ -2,8 +2,10 @@
 
 use bevy::{
     prelude::*, 
-    sprite::Anchor
+    sprite::Anchor,
+    transform::TransformSystem
 };
+
 
 use std::time::Duration;
 
@@ -13,7 +15,7 @@ impl Plugin for AnimationPlugin{
     fn build(&self, app: &mut App){
         app
             .add_event::<AnimationEnded>()
-            .add_systems(Update, (advance_animation).chain());
+            .add_systems(PostUpdate, (advance_animation).after(TransformSystem::TransformPropagate));
     }
 
 }
