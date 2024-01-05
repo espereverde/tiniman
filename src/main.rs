@@ -1,3 +1,5 @@
+#![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+
 use bevy::prelude::*;
 use bevy_rapier2d::{render::RapierDebugRenderPlugin, prelude::*};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;

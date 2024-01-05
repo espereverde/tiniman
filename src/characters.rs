@@ -1,4 +1,5 @@
-use bevy::transform::commands;
+#![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+
 use bevy::{prelude::*, utils::HashMap, transform::TransformSystem};
 use bevy_rapier2d::prelude::*;
 
@@ -105,10 +106,10 @@ pub struct Movement{
 
 const PLAYER_MOV: Movement = Movement{
     vel: Vec2::ZERO,
-    max_vel: Vec2 { x: 80., y: 220. },
-    forward_acc: 140.0,
-    glide_acc: 140.0,
-    brake_acc: 300.0
+    max_vel: Vec2 { x: 80., y: 200. },
+    forward_acc: 320.0,
+    glide_acc: 250.0,
+    brake_acc: 350.0
 };
 
 fn process_player_input(
@@ -147,6 +148,8 @@ fn update_air_movement(
 
             //Acceleration on air is half the acceleration on ground
             movement.vel.x += (movement.forward_acc / 2.0) * time.delta_seconds() * orders.horiz_dir;
+            //Clamp velocity
+            movement.vel.x = movement.vel.x.clamp(-movement.max_vel.x, movement.max_vel.x);
 
             //Change character action if needed
             if *c_action != next_action { *c_action = next_action; }
@@ -209,8 +212,16 @@ fn update_ground_movement(
             }
             //If no input direction the character is gliding and we slowly reduce its velocity
             else if orders.horiz_dir == 0.0 {
-                movement.vel.x -= movement.glide_acc * time.delta_seconds() * vel_dir;
-                next_action = CharacterAction::Running;
+                let target_velx = movement.vel.x - movement.glide_acc * time.delta_seconds() * vel_dir;
+                // If move direction after gliding is different than the oribinal move direction we stop
+                if movement.vel.x * target_velx <= 0.0{
+                    movement.vel.x = 0.0;
+                    next_action = CharacterAction::Idle
+                }
+                else{
+                    movement.vel.x = target_velx;
+                    next_action = CharacterAction::Running;
+                }
             }//If both directions coincide we use the forward acceleration
             else if orders.horiz_dir == vel_dir {
                 movement.vel.x += movement.forward_acc * time.delta_seconds() * orders.horiz_dir;
@@ -376,7 +387,7 @@ fn sync_sprite_face_dir(
 )
 {
     for (face_dir, mut sprite) in query.iter_mut(){
-        sprite.flip_x = (*face_dir == Facing::Left);
+        sprite.flip_x = *face_dir == Facing::Left;
     }
 }
 
