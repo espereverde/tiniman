@@ -323,6 +323,7 @@ fn check_into_wall(
 }
 
 fn check_outo_wall(
+    mut gizmos: Gizmos, 
     mut commands: Commands, 
     rapier_context: Res<RapierContext>,
     mut wall_query: Query<(Entity, &Movement, &GlobalTransform, &KinematicCharacterControllerOutput, &Facing, &mut CharacterAction),
@@ -341,6 +342,8 @@ fn check_outo_wall(
             Facing::Right => Vec2::NEG_X,
             Facing::Left => Vec2::X
         };
+
+        gizmos.ray_2d(char_pos, ray_dir * 3.5, Color::GREEN);
                 
         if let None = rapier_context.cast_ray(char_pos, ray_dir, 3.5, true, QueryFilter::default().exclude_rigid_body(char_id)){
             commands.entity(char_id).insert(OnAir).remove::<OnWall>();
@@ -408,28 +411,29 @@ pub struct CharacterBundle{
 
 impl CharacterBundle{
     pub fn new(name: &str, assets: &Res<PlayerAssets>) -> Self{
-        let atlas_field_name = format!("{name}_texture");
+        let atlas_field_name  = format!("{name}_texture");
         let atlas_field = assets.field(&atlas_field_name).unwrap();
         let atlas_handle = atlas_field.downcast_ref::<Handle<TextureAtlas>>().unwrap();
         
         let ssheet = SpriteSheetBundle{
             texture_atlas: atlas_handle.clone(),
+            //sprite: TextureAtlasSprite{anchor:bevy::sprite::Anchor::BottomCenter, ..default()},
             ..default()
         };
 
         let mut animations = ActionAnimations{ map: HashMap::new() };
-        animations.map.insert(CharacterAction::Idle, CompAnimation::new_segment(0, 2, 2.0, 0));
+        animations.map.insert(CharacterAction::Idle, CompAnimation::new_segment(0, 1, 1.0, 0));
         animations.map.insert(CharacterAction::Running, CompAnimation::new_segment(4, 7, 8.0, 0));
         animations.map.insert(CharacterAction::Jumping, CompAnimation::new_segment(8, 8, 1.0, 0));
-        animations.map.insert(CharacterAction::Falling, CompAnimation::new_segment(9, 9, 1.0, 0));
-        animations.map.insert(CharacterAction::Sliding, CompAnimation::new_segment( 16, 16, 1.0, 0));
+        animations.map.insert(CharacterAction::Falling, CompAnimation::new_segment(8, 8, 1.0, 0));
+        animations.map.insert(CharacterAction::Sliding, CompAnimation::new_segment( 8, 8, 1.0, 0));
         
 
         Self { 
             ssheet,
             body: RigidBody::KinematicPositionBased, 
             //collision: Collider::capsule(Vec2::NEG_Y, Vec2::Y, 3.0),
-            collision: Collider::cuboid(3.0, 4.0), 
+            collision: Collider::cuboid(5.0, 6.0), 
             controller: KinematicCharacterController{
                 offset:CharacterLength::Absolute(0.4),
                 

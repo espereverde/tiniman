@@ -23,5 +23,8 @@ impl Plugin for AssetManagerPluging{
 #[derive(AssetCollection, Resource, Reflect)]
 pub struct PlayerAssets {
     #[asset(key = "player.texture")]
-    player_texture: Handle<TextureAtlas>
+    player_texture: Handle<TextureAtlas>,
+
+    #[asset(key = "tinyman.texture")]
+    tinyman_texture: Handle<TextureAtlas>
 }

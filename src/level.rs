@@ -51,7 +51,7 @@ fn spawn_player(
     if let Ok((start_id, start_transform)) = start_query.get_single(){
         error!("Player");
         commands.entity(start_id)
-            .insert(CharacterBundle::new("player", &char_assets))
+            .insert(CharacterBundle::new("tinyman", &char_assets))
             .insert(Player{})
             .insert(start_transform.clone());
     }
@@ -115,7 +115,7 @@ pub fn camera_fit_inside_current_level(
                         //let height = (level.px_hei as f32 / 9.).round() * 9.;
                         let height = level.px_hei as f32;
                         let width = height * ASPECT_RATIO;
-                        window.resolution.set(width*3.0, height*3.0);
+                        window.resolution.set(width*2.0, height*2.0);
                         orthographic_projection.scaling_mode =
                             bevy::render::camera::ScalingMode::Fixed { width, height };
                         camera_transform.translation.x =
@@ -127,7 +127,7 @@ pub fn camera_fit_inside_current_level(
                         //let width = (level.px_wid as f32 / 16.).round() * 16.;
                         let width = level.px_wid as f32;
                         let height = width / ASPECT_RATIO;
-                        window.resolution.set(width*3.0, height*3.0);
+                        window.resolution.set(width*2.0, height*2.0);
                         orthographic_projection.scaling_mode =
                             bevy::render::camera::ScalingMode::Fixed { width, height };
                         camera_transform.translation.y =
