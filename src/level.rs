@@ -1,10 +1,11 @@
+use bevy::log::Level;
 use bevy::prelude::*;
 use bevy_ecs_ldtk::prelude::*;
 use bevy_rapier2d::prelude::*;
 
 use crate::GameStates;
 use crate::asset_manager::PlayerAssets;
-use crate::characters::{CharacterBundle, Player};
+use crate::characters::{TinyCharBundle, Player};
 
 use std::collections::{HashMap, HashSet};
 
@@ -32,7 +33,7 @@ impl Plugin for LevelPlugin {
         app
             // Set the background color.
             .add_plugins(LdtkPlugin)
-            .insert_resource(LevelSelection::Index(0))
+            .insert_resource(LevelSelection::Indices(LevelIndices { level: 0, ..default() }))
             .register_ldtk_entity::<StartPosBundle>("Start_position")
             .register_ldtk_int_cell::<WallBundle>(1)
             .add_systems(Startup, setup_map)
@@ -51,7 +52,7 @@ fn spawn_player(
     if let Ok((start_id, start_transform)) = start_query.get_single(){
         error!("Player");
         commands.entity(start_id)
-            .insert(CharacterBundle::new("tinyman", &char_assets))
+            .insert(TinyCharBundle::new("tinyman", &char_assets))
             .insert(Player{})
             .insert(start_transform.clone());
     }
@@ -67,7 +68,7 @@ pub struct StartPosBundle{
 
 fn setup_map(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn(LdtkWorldBundle {
-        ldtk_handle: asset_server.load("maps/mosaic.ldtk"),
+        ldtk_handle: asset_server.load("maps/fire_world.ldtk"),
         ..Default::default()
     });
 }
@@ -84,11 +85,12 @@ pub fn camera_fit_inside_current_level(
     >,
     //player_query: Query<&Transform, With<Player>>,
     level_query: Query<
-        (&Transform, &Handle<LdtkLevel>),
+        (&Transform, &LevelIid),
         (Without<OrthographicProjection>, Without<Player>),
     >,
     level_selection: Res<LevelSelection>,
-    ldtk_levels: Res<Assets<LdtkLevel>>,
+    projects: Query<&Handle<LdtkProject>>,
+    project_assets: Res<Assets<LdtkProject>>
 ) {
     /*if let Ok(Transform {
         translation: player_translation,
@@ -101,10 +103,11 @@ pub fn camera_fit_inside_current_level(
 
         let (mut orthographic_projection, mut camera_transform) = camera_query.single_mut();
 
-        for (level_transform, level_handle) in &level_query {
-            if let Some(ldtk_level) = ldtk_levels.get(level_handle) {
-                let level = &ldtk_level.level;
-                if level_selection.is_match(&0, level) {
+        for (level_transform, level_iid) in &level_query {
+            let only_project = project_assets.get(projects.single()).unwrap();
+            if let Some(ldtk_level) = only_project.get_raw_level_by_iid(level_iid.get()) {
+                let level = &ldtk_level;
+                if level_selection.is_match(&LevelIndices{level:0, ..default()}, level) {
 
                     let mut window = window_query.single_mut();
 
@@ -163,8 +166,9 @@ pub fn spawn_wall_collision(
     mut commands: Commands,
     wall_query: Query<(&GridCoords, &Parent), Added<Wall>>,
     parent_query: Query<&Parent, Without<Wall>>,
-    level_query: Query<(Entity, &Handle<LdtkLevel>)>,
-    levels: Res<Assets<LdtkLevel>>,
+    level_query: Query<(Entity, &LevelIid)>,
+    projects: Query<&Handle<LdtkProject>>,
+    project_assets: Res<Assets<LdtkProject>>
 ) {
     /// Represents a wide wall that is 1 tile tall
     /// Used to spawn wall collisions
@@ -204,10 +208,11 @@ pub fn spawn_wall_collision(
     });
 
     if !wall_query.is_empty() {
-        level_query.for_each(|(level_entity, level_handle)| {
+        let only_project = project_assets.get(projects.single()).unwrap();
+        level_query.for_each(|(level_entity, level_iid)| {
             if let Some(level_walls) = level_to_wall_locations.get(&level_entity) {
-                let level = levels
-                    .get(level_handle)
+                let level = only_project
+                    .get_raw_level_by_iid(level_iid.get())
                     .expect("Level should be loaded by this point");
 
                 let LayerInstance {
@@ -216,7 +221,6 @@ pub fn spawn_wall_collision(
                     grid_size,
                     ..
                 } = level
-                    .level
                     .layer_instances
                     .clone()
                     .expect("Level asset should have layers")[0];

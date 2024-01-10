@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy_asset_loader::prelude::*;
+use bevy_asset_loader::asset_collection::AssetCollection;
 
 use crate::GameStates;
 
@@ -22,8 +23,6 @@ impl Plugin for AssetManagerPluging{
 
 #[derive(AssetCollection, Resource, Reflect)]
 pub struct PlayerAssets {
-    #[asset(key = "player.texture")]
-    player_texture: Handle<TextureAtlas>,
 
     #[asset(key = "tinyman.texture")]
     tinyman_texture: Handle<TextureAtlas>

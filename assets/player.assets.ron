@@ -5,16 +5,16 @@
             tile_size_y: 8.,
             columns: 4,
             rows: 5,
-            padding_x: Some(2.0),
-            padding_y: Some(2.0)
+            padding_x: 2.0,
+            padding_y: 2.0
         ),
     "tinyman.texture": TextureAtlas (
             path: "sprites/tinyman.png",
             tile_size_x: 16.,
             tile_size_y: 16.,
             columns: 4,
-            rows: 3,
-            padding_x: Some(2.0),
-            padding_y: Some(2.0)
+            rows: 6,
+            padding_x: 2.0,
+            padding_y: 2.0
         ),
 })

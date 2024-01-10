@@ -1,6 +1,8 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
 
 use bevy::prelude::*;
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
+use bevy::diagnostic::LogDiagnosticsPlugin;
 use bevy_rapier2d::{render::RapierDebugRenderPlugin, prelude::*};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
@@ -33,9 +35,11 @@ fn main() {
         )
         
         //.init_collection::<CharacterAssets>()
-        .add_plugins(WorldInspectorPlugin::new())
+        //.add_plugins(WorldInspectorPlugin::new())
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(6.0))
         //.add_plugins(RapierDebugRenderPlugin::default())
+        //.add_plugins(FrameTimeDiagnosticsPlugin::default())
+        //.add_plugins(LogDiagnosticsPlugin::default())
         .add_plugins(AssetManagerPluging)
         .add_plugins(AnimationPlugin)
         .add_plugins(CharacterPlugin)

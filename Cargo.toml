@@ -1,5 +1,5 @@
 [package]
-name = "game_prototypes"
+name = "tinyman"
 version = "0.1.0"
 edition = "2021"
 resolver = "2"
@@ -7,9 +7,9 @@ resolver = "2"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { version = "0.11.3"}
-bevy_asset_loader = {version = "*", features = ["2d", "standard_dynamic_assets"]}
-bevy_ecs_ldtk = "*"
+bevy = { version = "0.12.1"}
+bevy_asset_loader = {version = "0.19.1", features = ["2d", "standard_dynamic_assets"]}
+bevy_ecs_ldtk = { git = "https://github.com/Trouv/bevy_ecs_ldtk.git", branch="feat/bevy-0.12" }
 bevy_rapier2d = "*"
 bevy-inspector-egui= "*"
 
@@ -21,3 +21,6 @@ opt-level = 0
 # Enable high optimizations for dependencies (incl. Bevy), but not for our code:
 [profile.dev.package."*"]
 opt-level = 3
+
+[patch.crates-io]
+bevy_ecs_tilemap = { git = "https://github.com/StarArawn/bevy_ecs_tilemap.git"}

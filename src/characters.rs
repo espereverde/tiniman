@@ -1,6 +1,9 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
 
+use std::hash::Hash;
+
 use bevy::{prelude::*, utils::HashMap, transform::TransformSystem};
+use bevy_rapier2d::na::SimdBool;
 use bevy_rapier2d::prelude::*;
 
 use crate::asset_manager::PlayerAssets;
@@ -30,15 +33,14 @@ impl Plugin for CharacterPlugin {
                 .before(TransformSystem::TransformPropagate)
             )
 
-            .add_systems(PreUpdate, process_player_input)
+            .add_systems(PreUpdate, (process_player_input, update_action_elapsed))
             .add_systems(Update, (
-                update_air_movement,
-                update_ground_movement,
-                update_wall_movement,
+                update_player_air_movement,
+                update_player_ground_movement,
             ).in_set(CharacterSet::PrepareMovement))
             .add_systems( Update, apply_movement.in_set(CharacterSet::ApplyMovement))
 
-            .add_systems(PostUpdate, (check_into_wall, check_outo_wall, check_ground, stop_on_bump).in_set(CharacterSet::UpdateMode))
+            .add_systems(PostUpdate, (check_ground, stop_on_bump).in_set(CharacterSet::UpdateMode))
             .add_systems(PostUpdate, (sync_action_animation, sync_sprite_face_dir, /* debug_collisions */).in_set(CharacterSet::SyncSprite))
         ;
     }
@@ -73,15 +75,17 @@ impl Facing{
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Component)]
 pub enum CharacterAction{
     Idle,
+    RunStart,
     Running,
+    RunEnd,
+    Sliding,
     Jumping,
-    Falling,
-    Sliding
+    Falling
 }
 
 
-/* #[derive(Debug, Component)]
-pub struct CurrentAction(CharacterAction); */
+#[derive(Debug, Component, Default)]
+struct ActionElapsed(f32);
 
 #[derive(Debug, Component)]
 pub struct ActionAnimations{
@@ -91,9 +95,44 @@ pub struct ActionAnimations{
 #[derive(Debug, Component, Reflect, Default)]
 struct InputOrders{
     horiz_dir: f32,
+    do_slide: bool,
     do_jump: bool,
     keep_jump: bool
 }
+
+#[derive(Debug, Component, Default)]
+pub struct CharVelocity{
+    x: f32,
+    y: f32
+}
+
+#[derive(Debug, Component)]
+pub struct MoveStyle{
+    walk_speed: f32,
+    start_delay: f32,
+    brake_delay: f32,
+    brake_speed: f32,
+    slide_speed: f32,
+    slide_duration: f32,
+    jump_impulse: f32,
+    jump_h_speed: f32,
+    gravity_acc: f32,
+    terminal_vel: f32
+    
+}
+
+const TINYMAN_MOV: MoveStyle = MoveStyle{
+    walk_speed: 41.3,
+    start_delay: 0.1,
+    brake_delay: 0.1,
+    brake_speed: 0.0,
+    slide_speed: 82.6,
+    slide_duration: 0.333,
+    jump_impulse: 146.0,
+    jump_h_speed: 41.3,
+    gravity_acc: 450.0,
+    terminal_vel: 210.0
+};
 
 #[derive(Debug, Component, Reflect)]
 pub struct Movement{
@@ -106,7 +145,7 @@ pub struct Movement{
 
 const PLAYER_MOV: Movement = Movement{
     vel: Vec2::ZERO,
-    max_vel: Vec2 { x: 80., y: 200. },
+    max_vel: Vec2 { x: 48., y: 200. },
     forward_acc: 320.0,
     glide_acc: 250.0,
     brake_acc: 350.0
@@ -123,33 +162,49 @@ fn process_player_input(
         if keyboard.pressed(KeyCode::Right) { player_input.horiz_dir += 1.0; }
         if keyboard.pressed(KeyCode::Left) { player_input.horiz_dir -= 1.0; }
         //Store jump key press state
-        player_input.do_jump = keyboard.just_pressed(KeyCode::Z);
         player_input.keep_jump = keyboard.pressed(KeyCode::Z);
+        if keyboard.just_pressed(KeyCode::Z){
+            if keyboard.pressed(KeyCode::Down){
+                player_input.do_slide = true;
+                player_input.do_jump = false;
+            }
+            else{
+                player_input.do_jump = true;
+                player_input.do_slide = false;
+            }
+        }else{
+            player_input.do_slide = false;
+            player_input.do_jump = false;
+        }
     }
 }
 
-fn update_air_movement(
+
+fn update_player_air_movement(
     time: Res<Time>,
-    mut move_query: Query<(&InputOrders, &mut Movement, &mut CharacterAction), With<OnAir>>
+    mut move_query: Query<(&InputOrders, &MoveStyle, &mut CharVelocity, &mut CharacterAction, &mut Facing), With<OnAir>>
 )
 {
-    for (orders, mut movement, mut c_action ) in move_query.iter_mut(){
+    for (orders, movement, mut velocity, mut c_action , mut face_dir) in move_query.iter_mut(){
+            
             let mut next_action = c_action.clone();
 
-            if movement.vel.y > 0.0 && !orders.keep_jump {
-                movement.vel.y -= GRAVITY * time.delta_seconds();
-            }
+            if velocity.y > 30.0 && !orders.keep_jump { velocity.y = 30.0}
             else{
-                movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()/2.0).clamp(-movement.max_vel.y, movement.max_vel.y);
+                velocity.y -= movement.gravity_acc*time.delta_seconds();
+                velocity.y = velocity.y.clamp(-movement.terminal_vel, movement.terminal_vel);
             }
 
-            if movement.vel.y > 0.0 { next_action = CharacterAction::Jumping}
-            else if movement.vel.y < 0.0 {next_action = CharacterAction::Falling}
+            if velocity.y > 0.0 { next_action = CharacterAction::Jumping}
+            else if velocity.y < 0.0 {next_action = CharacterAction::Jumping}
 
-            //Acceleration on air is half the acceleration on ground
-            movement.vel.x += (movement.forward_acc / 2.0) * time.delta_seconds() * orders.horiz_dir;
-            //Clamp velocity
-            movement.vel.x = movement.vel.x.clamp(-movement.max_vel.x, movement.max_vel.x);
+            velocity.x = orders.horiz_dir * movement.walk_speed;
+            if orders.horiz_dir == 1.0 {
+                face_dir.set_dir(Facing::Right);   
+            }
+            else if orders.horiz_dir == -1.0{
+                face_dir.set_dir(Facing::Left);
+            }
 
             //Change character action if needed
             if *c_action != next_action { *c_action = next_action; }
@@ -157,116 +212,182 @@ fn update_air_movement(
         
 }
 
-fn update_wall_movement(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut player_query: Query<(Entity, &InputOrders, &Facing, &mut CharacterAction, &mut Movement), (With<Player>, With<OnWall>)>
-){
-    for (char_id, orders, face_dir, mut action, mut movement) in player_query.iter_mut(){
-        if orders.do_jump{
-            if *face_dir == Facing::Right{
-                movement.vel.x = 40.0;}
-            else{
-                movement.vel.x = -40.0;
-            }
-            movement.vel.y = 120.0;
-            commands.entity(char_id).remove::<OnWall>().insert(OnAir);
-        }
-        else{
-            movement.vel.x = 0.0;
-            if movement.vel.y < 0.0{
-                movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()/4.0).clamp(-movement.max_vel.y/4.0, movement.max_vel.y);
-            }
-            else{
-                if orders.keep_jump{ movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()/2.0).clamp(-movement.max_vel.y/4.0, movement.max_vel.y); }
-                else{ movement.vel.y = (movement.vel.y - GRAVITY * time.delta_seconds()).clamp(-movement.max_vel.y/4.0, movement.max_vel.y); }
-            }
-
-            //Change character action if needed
-            if *action != CharacterAction::Sliding { *action = CharacterAction::Sliding; }
-        }
-    }
-}
-
 // System that controls the Player character from parses player input.
 /// In reads keypresses and modifies the player Entity's Speed component.
-fn update_ground_movement(
-    time: Res<Time>,
-    mut player_query: Query<(&InputOrders, &mut CharacterAction, &mut Movement, &mut Facing), (With<Player>, With<OnGround>)>
-) {
-    if let Some((orders, mut c_action, mut movement, mut face_dir)) = player_query.iter_mut().next() {
+fn update_player_ground_movement(
+    mut player_query: Query<(&InputOrders, &mut CharacterAction, &ActionElapsed, &MoveStyle, &mut CharVelocity, &mut Facing), (With<Player>, With<OnGround>)>
+){
+    if let Some((orders, mut c_action, a_elapsed, movement, mut velocity, mut face_dir)) = player_query.iter_mut().next() {
         
         let mut next_action = c_action.clone();
 
-        if orders.do_jump {movement.vel.y = 160.0;}
-        else{
-            //movement.vel.y = -0.1;
-            // Get the current velocity direction. If character is not moving we take the input direction.
-            let vel_dir = 
-                if movement.vel.x == 0.0 { orders.horiz_dir }
-                else { movement.vel.x.signum()};
+        let vel_dir = 
+                if velocity.x == 0.0 { 
+                    match *face_dir {
+                        Facing::Left => -1.0,
+                        Facing::Right => 1.0
+                    }
+                 }
+                else { velocity.x.signum()};
 
-            if orders.horiz_dir == 0.0 && movement.vel.x.abs() < 1.0 { 
-                movement.vel.x = 0.0;
-                next_action = CharacterAction::Idle;
+        if orders.do_jump{
+            *c_action = CharacterAction::Jumping;
+            velocity.x = movement.jump_h_speed * orders.horiz_dir;
+            velocity.y = movement.jump_impulse;
+            if orders.horiz_dir == 1.0 {
+                face_dir.set_dir(Facing::Right);   
             }
-            //If no input direction the character is gliding and we slowly reduce its velocity
-            else if orders.horiz_dir == 0.0 {
-                let target_velx = movement.vel.x - movement.glide_acc * time.delta_seconds() * vel_dir;
-                // If move direction after gliding is different than the oribinal move direction we stop
-                if movement.vel.x * target_velx <= 0.0{
-                    movement.vel.x = 0.0;
-                    next_action = CharacterAction::Idle
-                }
-                else{
-                    movement.vel.x = target_velx;
+            else if orders.horiz_dir == -1.0{
+                face_dir.set_dir(Facing::Left);
+            }
+            return;
+        }
+
+        velocity.y = -1.0;
+        match *c_action {
+            CharacterAction::Jumping =>{
+                if orders.horiz_dir == 1.0 {
+                    face_dir.set_dir(Facing::Right);
+                    velocity.x = movement.walk_speed * orders.horiz_dir;
                     next_action = CharacterAction::Running;
                 }
-            }//If both directions coincide we use the forward acceleration
-            else if orders.horiz_dir == vel_dir {
-                movement.vel.x += movement.forward_acc * time.delta_seconds() * orders.horiz_dir;
-                next_action = CharacterAction::Running;
-            //If directions are different we use the brake acceleration
-            } else{
-                movement.vel.x += movement.brake_acc * time.delta_seconds() * orders.horiz_dir;
-                next_action = CharacterAction::Running;
+                else if orders.horiz_dir == -1.0{
+                    face_dir.set_dir(Facing::Left);
+                    velocity.x = movement.walk_speed * orders.horiz_dir;
+                    next_action = CharacterAction::Running;
+                }
+                else{
+                    velocity.x = 0.0;
+                    next_action = CharacterAction::Idle;
+
+                }
             }
+            CharacterAction::Idle =>{
+                if orders.do_slide{
+                    velocity.x = movement.slide_speed * vel_dir;
+                    next_action = CharacterAction::Sliding;
+                }
+                else if orders.horiz_dir == 1.0 {
+                    face_dir.set_dir(Facing::Right);
+                    velocity.x = 60.0 * orders.horiz_dir;
+                    next_action = CharacterAction::RunStart;
+                }
+                else if orders.horiz_dir == -1.0{
+                    face_dir.set_dir(Facing::Left);
+                    velocity.x = 60.0 * orders.horiz_dir;
+                    next_action = CharacterAction::RunStart;
+                }
+            },
+            CharacterAction::RunStart =>{
+                if orders.do_slide{
+                    velocity.x = movement.slide_speed * vel_dir;
+                    next_action = CharacterAction::Sliding;
+                }
+                else if orders.horiz_dir == 0.0{
+                    velocity.x = 0.0;
+                    next_action = CharacterAction::Idle;
+                }
+                else {
+                    if a_elapsed.0 <= movement.start_delay{
+                        velocity.x = 0.0;
+                        error!("asdf");
+                    }
+                    else{
+                        velocity.x = movement.walk_speed * orders.horiz_dir;
+                        if orders.horiz_dir == 1.0 {
+                            face_dir.set_dir(Facing::Right);
+                        }
+                        else{ face_dir.set_dir(Facing::Left); }
+                        next_action = CharacterAction::Running
+                    }
+                }
+            },
+            CharacterAction::Running =>{
+                if orders.do_slide{
+                    velocity.x = movement.slide_speed * vel_dir;
+                    next_action = CharacterAction::Sliding;
+                }
+                else if orders.horiz_dir == vel_dir{
+                    velocity.x = movement.walk_speed * orders.horiz_dir;
+                }else{
+                    velocity.x = 0.0;
+                    next_action = CharacterAction::RunEnd;
+                }
+            },
+            CharacterAction::RunEnd =>{
+                if orders.do_slide{
+                    velocity.x = movement.slide_speed * vel_dir;
+                    next_action = CharacterAction::Sliding;
+                }
+                else if orders.horiz_dir == 0.0{
+                    if a_elapsed.0 <= movement.brake_delay{ 
+                        velocity.x = 0.0;
+                    }else{
+                        velocity.x = 0.0;
+                        next_action = CharacterAction::Idle;
+                    }
+                }else if orders.horiz_dir == vel_dir{
+                    velocity.x = 60.0 * orders.horiz_dir;
+                    next_action = CharacterAction::RunStart;
+                }else{
+                    if a_elapsed.0 <= movement.brake_delay{ 
+                        velocity.x = 0.0;
+                    }
+                    else{
+                        velocity.x = movement.walk_speed * orders.horiz_dir;
+                        if orders.horiz_dir == 1.0 {
+                            face_dir.set_dir(Facing::Right);
+                        }
+                        else{ face_dir.set_dir(Facing::Left); }
+                        next_action = CharacterAction::Running;
+                    }
+                }
+            },
+            CharacterAction::Sliding => {
+                if a_elapsed.0 > movement.slide_duration{
+                    if orders.horiz_dir == 1.0 {
+                        face_dir.set_dir(Facing::Right);
+                        velocity.x = movement.walk_speed * orders.horiz_dir;
+                        next_action = CharacterAction::Running;
+                    }
+                    else if orders.horiz_dir == -1.0{
+                        face_dir.set_dir(Facing::Left);
+                        velocity.x = movement.walk_speed * orders.horiz_dir;
+                        next_action = CharacterAction::Running;
+                    }
+                    else{
+                        velocity.x = 0.0;
+                        next_action = CharacterAction::Idle;
+                    }
+                }
+            },
+            _ => {}
+
         }
-        //Clamp velocity
-        movement.vel.x = movement.vel.x.clamp(-movement.max_vel.x, movement.max_vel.x);
-        
+
         //Change character action if needed
         if *c_action != next_action { *c_action = next_action; }
-
-        if orders.horiz_dir == 1.0 {
-            face_dir.set_dir(Facing::Right)
-        }else if orders.horiz_dir == -1.0{
-            face_dir.set_dir(Facing::Left)
-        }
     }
 }
 
 fn apply_movement(
     time: Res<Time>,
-    mut controller_query: Query<(&Movement, &mut KinematicCharacterController)>
+    mut controller_query: Query<(&CharVelocity, &mut KinematicCharacterController)>
 ){
     for (velocity, mut controller) in controller_query.iter_mut(){
-        controller.translation = Some(velocity.vel * time.delta_seconds())
+        controller.translation = Some(Vec2::new(velocity.x, velocity.y) * time.delta_seconds());
     }
 }
 
 fn stop_on_bump(
-    mut move_query: Query<(&mut Movement, &KinematicCharacterControllerOutput)>
+    mut move_query: Query<(&mut CharVelocity, &KinematicCharacterControllerOutput)>
 )
 {
-    for (mut movement, kin_output) in move_query.iter_mut(){
-        if (kin_output.desired_translation.x - kin_output.effective_translation.x).abs() > 0.1{
-            movement.vel.x = 0.1 * kin_output.desired_translation.x.signum();
-        }
+    for (mut velocity, kin_output) in move_query.iter_mut(){
         //Only check collisions while going up. There was a glitch if we use .abs() like we did in the x axis.
         //The character sometimes got stuck in a cliff upper corner
         if (kin_output.desired_translation.y - kin_output.effective_translation.y)> 0.1{
-            movement.vel.y = -1.0;
+            velocity.y = -4.0;
             error!("v_bump");
         }
     }
@@ -274,81 +395,22 @@ fn stop_on_bump(
 
 fn check_ground(
     mut command: Commands,
-    mut ground_query: Query<(Entity, &mut Movement, &KinematicCharacterControllerOutput, Option<&OnGround>, Option<&OnAir>)>
+    mut ground_query: Query<(Entity, &mut CharVelocity, &KinematicCharacterControllerOutput, Option<&OnGround>, Option<&OnAir>)>
 )
 {
-    for (char_id, mut movement, output, op_ground, op_air) in ground_query.iter_mut(){
+    for (char_id, mut velocity, output, op_ground, op_air) in ground_query.iter_mut(){
         if let Some(_) = op_ground{
             if !output.grounded { 
+                error!("OnAir");
                 command.entity(char_id).insert(OnAir).remove::<OnGround>(); 
             }
         }
         if let Some(_) = op_air {
-            if output.grounded && movement.vel.y < 0.0 {
+            if output.grounded && velocity.y < 0.0 {
                 error!("Grounded"); 
-                movement.vel.y = -1.0;
+                velocity.y = -1.0;
                 command.entity(char_id).insert(OnGround).remove::<OnAir>(); 
             }
-        }
-    }
-}
-
-fn check_into_wall(
-    mut commands: Commands, 
-    mut wall_query: Query<(Entity, &Movement, &KinematicCharacterControllerOutput, &mut Facing, &mut CharacterAction),
-        With<OnAir>>
-){
-    for (char_id, movement, output,
-         mut face_dir, mut action
-    ) in wall_query.iter_mut(){
-        for collision in output.collisions.iter(){
-            if output.grounded && movement.vel.y < 0.0{ 
-                commands.entity(char_id).insert(OnGround).remove::<OnAir>().remove::<OnWall>(); 
-            }
-            // Collision on the right side
-            if collision.toi.normal2.x > 0.8 && movement.vel.x > 0.0{
-                commands.entity(char_id).insert(OnWall).remove::<OnAir>();
-                face_dir.set_dir(Facing::Left);
-                *action = CharacterAction::Sliding;
-                error!("start slide right");
-            // Collision on the left side 
-            }else if collision.toi.normal2.x < -0.8 && movement.vel.x < 0.0{
-                commands.entity(char_id).insert(OnWall).remove::<OnAir>(); 
-                face_dir.set_dir(Facing::Right);
-                *action = CharacterAction::Sliding;
-                error!("start slide");
-            }
-        }
-    }
-}
-
-fn check_outo_wall(
-    mut gizmos: Gizmos, 
-    mut commands: Commands, 
-    rapier_context: Res<RapierContext>,
-    mut wall_query: Query<(Entity, &Movement, &GlobalTransform, &KinematicCharacterControllerOutput, &Facing, &mut CharacterAction),
-        With<OnWall>>
-){
-    for (char_id, movement, g_transform, output,
-         mut face_dir, mut action
-    ) in wall_query.iter_mut(){
-        
-        let char_pos = g_transform.translation().truncate();
-        if output.grounded && movement.vel.y < 0.0{ 
-            commands.entity(char_id).insert(OnGround).remove::<OnWall>(); 
-        }
-
-        let ray_dir = match face_dir{
-            Facing::Right => Vec2::NEG_X,
-            Facing::Left => Vec2::X
-        };
-
-        gizmos.ray_2d(char_pos, ray_dir * 3.5, Color::GREEN);
-                
-        if let None = rapier_context.cast_ray(char_pos, ray_dir, 3.5, true, QueryFilter::default().exclude_rigid_body(char_id)){
-            commands.entity(char_id).insert(OnAir).remove::<OnWall>();
-            //*action = CharacterAction::Sliding;
-            error!("end slide");
         }
     }
 }
@@ -359,26 +421,38 @@ fn debug_collisions(
 ) {
     for (output, transform) in controller_outputs.iter_mut() {
         for collision in &output.collisions {
-            // Collision in map space
-            let contact_point = collision.toi.witness1;
-            let normal = collision.toi.normal1;
-            gizmos.line_2d(contact_point, contact_point + normal*10.0, Color::RED);
-            // Collision in character space
-            let contact_point = collision.toi.witness2 + transform.translation().truncate();
-            let normal = collision.toi.normal2;
-            gizmos.line_2d(contact_point, contact_point + normal*10.0, Color::GREEN);
+            if let Some(col_details) = collision.toi.details{ 
+                // Collision in map space
+                let contact_point = col_details.witness1;
+                let normal = col_details.normal1;
+                gizmos.line_2d(contact_point, contact_point + normal*10.0, Color::RED);
+                // Collision in character space
+                let contact_point = col_details.witness2 + transform.translation().truncate();
+                let normal = col_details.normal2;
+                gizmos.line_2d(contact_point, contact_point + normal*10.0, Color::GREEN);
+                }
         }
     }
 }
 
 
+fn update_action_elapsed(
+    time: Res<Time>,
+    mut el_query: Query<&mut ActionElapsed>
+){
+    for mut elapsed in el_query.iter_mut(){
+        elapsed.0 += time.delta_seconds();
+    }
+}
+
 fn sync_action_animation(
     mut commands: Commands,
-    anim_query: Query<(Entity, &CharacterAction, &ActionAnimations), Changed<CharacterAction>>
+    mut anim_query: Query<(Entity, &CharacterAction, &ActionAnimations, &mut ActionElapsed), Changed<CharacterAction>>
 )
 {
-    for (entity_id, action, animation_map) in anim_query.iter(){
+    for (entity_id, action, animation_map, mut elapsed) in anim_query.iter_mut(){
         error!("{:?}", action);
+        elapsed.0 = 0.0;
         if let Some(anim) = animation_map.map.get(action){
             commands.entity(entity_id).insert(anim.clone());
         }
@@ -433,7 +507,7 @@ impl CharacterBundle{
             ssheet,
             body: RigidBody::KinematicPositionBased, 
             //collision: Collider::capsule(Vec2::NEG_Y, Vec2::Y, 3.0),
-            collision: Collider::cuboid(5.0, 6.0), 
+            collision: Collider::cuboid(4.0, 6.0), 
             controller: KinematicCharacterController{
                 offset:CharacterLength::Absolute(0.4),
                 
@@ -441,6 +515,66 @@ impl CharacterBundle{
             movement: PLAYER_MOV,
             facing: Facing::Right,
             action: CharacterAction::Idle,
+            animations,
+            grounded: OnGround,
+            orders: InputOrders::default()
+        }
+    }
+}
+
+#[derive(Bundle)]
+pub struct TinyCharBundle{
+    ssheet: SpriteSheetBundle,
+    body: RigidBody,
+    collision: Collider,
+    controller: KinematicCharacterController,
+    movement: MoveStyle,
+    velocity: CharVelocity,
+    action: CharacterAction,
+    a_elapsed: ActionElapsed,
+    facing: Facing,
+    animations: ActionAnimations,
+    grounded: OnGround,
+    orders: InputOrders
+}
+
+impl TinyCharBundle{
+    pub fn new(name: &str, assets: &Res<PlayerAssets>) -> Self{
+        let atlas_field_name  = format!("{name}_texture");
+        let atlas_field = assets.field(&atlas_field_name).unwrap();
+        let atlas_handle = atlas_field.downcast_ref::<Handle<TextureAtlas>>().unwrap();
+        
+        let ssheet = SpriteSheetBundle{
+            texture_atlas: atlas_handle.clone(),
+            //sprite: TextureAtlasSprite{anchor:bevy::sprite::Anchor::BottomCenter, ..default()},
+            ..default()
+        };
+
+        let mut animations = ActionAnimations{ map: HashMap::new() };
+        animations.map.insert(CharacterAction::Idle, CompAnimation::new_segment(0, 1, 1.0, 0));
+        animations.map.insert(CharacterAction::RunStart, CompAnimation::new_segment(4, 4, 1.0, 0));
+        animations.map.insert(CharacterAction::RunEnd, CompAnimation::new_segment(4, 4, 1.0, 0));
+        animations.map.insert(CharacterAction::Running, CompAnimation::new_segment(8, 11, 8.0, 0));
+        animations.map.insert(CharacterAction::Sliding, CompAnimation::new_segment( 12, 12, 1.0, 0));
+        animations.map.insert(CharacterAction::Jumping, CompAnimation::new_segment(16, 16, 1.0, 0));
+        animations.map.insert(CharacterAction::Falling, CompAnimation::new_segment(8, 8, 1.0, 0));
+        
+        
+
+        Self { 
+            ssheet,
+            body: RigidBody::KinematicPositionBased, 
+            //collision: Collider::capsule(Vec2::NEG_Y, Vec2::Y, 3.0),
+            collision: Collider::cuboid(4.0, 6.0), 
+            controller: KinematicCharacterController{
+                offset:CharacterLength::Absolute(0.4),
+                
+                 ..default()},
+            movement: TINYMAN_MOV,
+            velocity: CharVelocity::default(),
+            facing: Facing::Right,
+            action: CharacterAction::Idle,
+            a_elapsed: ActionElapsed::default(),
             animations,
             grounded: OnGround,
             orders: InputOrders::default()
