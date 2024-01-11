@@ -1,15 +1,15 @@
-#![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+//#![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
 
 use std::hash::Hash;
 
+use bevy::ecs::query;
+use bevy::transform::commands;
 use bevy::{prelude::*, utils::HashMap, transform::TransformSystem};
 use bevy_rapier2d::na::SimdBool;
 use bevy_rapier2d::prelude::*;
 
 use crate::asset_manager::PlayerAssets;
-use crate::animation::CompAnimation;
-
-const GRAVITY: f32 = 700.0;
+use crate::animation::FrameAnimation;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, SystemSet)]
 pub enum CharacterSet{
@@ -24,7 +24,7 @@ pub struct CharacterPlugin;
 impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app
-            .register_type::<Movement>()
+            .register_type::<MoveStyle>()
 
             .configure_sets(Update, (CharacterSet::PrepareMovement, CharacterSet::ApplyMovement).chain())
             .configure_sets(PostUpdate, (CharacterSet::UpdateMode,CharacterSet::SyncSprite)
@@ -33,15 +33,15 @@ impl Plugin for CharacterPlugin {
                 .before(TransformSystem::TransformPropagate)
             )
 
-            .add_systems(PreUpdate, (process_player_input, update_action_elapsed))
+            .add_systems(PreUpdate, (process_player_input, update_action_elapsed, update_shoot_elapsed,))
             .add_systems(Update, (
                 update_player_air_movement,
                 update_player_ground_movement,
             ).in_set(CharacterSet::PrepareMovement))
-            .add_systems( Update, apply_movement.in_set(CharacterSet::ApplyMovement))
+            .add_systems( Update, (apply_movement, try_to_shoot).chain().in_set(CharacterSet::ApplyMovement))
 
-            .add_systems(PostUpdate, (check_ground, stop_on_bump).in_set(CharacterSet::UpdateMode))
-            .add_systems(PostUpdate, (sync_action_animation, sync_sprite_face_dir, /* debug_collisions */).in_set(CharacterSet::SyncSprite))
+            .add_systems(PostUpdate, (stop_on_bump, check_ground,).in_set(CharacterSet::UpdateMode))
+            .add_systems(PostUpdate, (sync_action_animation, sync_sprite_face_dir, sync_gun_gesture).in_set(CharacterSet::SyncSprite))
         ;
     }
 }
@@ -83,13 +83,20 @@ pub enum CharacterAction{
     Falling
 }
 
+#[derive(Debug, Component, Default)]
+pub struct ShootGesture{
+    active:bool
+}
+
+#[derive(Debug, Component, Default)]
+struct ShootElapsed(f32);
 
 #[derive(Debug, Component, Default)]
 struct ActionElapsed(f32);
 
 #[derive(Debug, Component)]
 pub struct ActionAnimations{
-    map: HashMap<CharacterAction, CompAnimation>
+    map: HashMap<CharacterAction, FrameAnimation>
 }
 
 #[derive(Debug, Component, Reflect, Default)]
@@ -97,7 +104,8 @@ struct InputOrders{
     horiz_dir: f32,
     do_slide: bool,
     do_jump: bool,
-    keep_jump: bool
+    keep_jump: bool,
+    do_shoot: bool
 }
 
 #[derive(Debug, Component, Default)]
@@ -106,7 +114,7 @@ pub struct CharVelocity{
     y: f32
 }
 
-#[derive(Debug, Component)]
+#[derive(Debug, Component, Reflect)]
 pub struct MoveStyle{
     walk_speed: f32,
     start_delay: f32,
@@ -117,8 +125,7 @@ pub struct MoveStyle{
     jump_impulse: f32,
     jump_h_speed: f32,
     gravity_acc: f32,
-    terminal_vel: f32
-    
+    terminal_vel: f32   
 }
 
 const TINYMAN_MOV: MoveStyle = MoveStyle{
@@ -134,27 +141,11 @@ const TINYMAN_MOV: MoveStyle = MoveStyle{
     terminal_vel: 210.0
 };
 
-#[derive(Debug, Component, Reflect)]
-pub struct Movement{
-    vel: Vec2,
-    max_vel: Vec2,
-    forward_acc: f32, 
-    glide_acc: f32, 
-    brake_acc: f32
-}
-
-const PLAYER_MOV: Movement = Movement{
-    vel: Vec2::ZERO,
-    max_vel: Vec2 { x: 48., y: 200. },
-    forward_acc: 320.0,
-    glide_acc: 250.0,
-    brake_acc: 350.0
-};
-
 fn process_player_input(
     keyboard: Res<Input<KeyCode>>,
     mut input_query: Query<&mut InputOrders, With<Player>>
 ){
+    //error!("Frame");
     if let Ok(mut player_input) = input_query.get_single_mut(){
         //Calculate desired input direction +1 for right, -1 for left. 
         //If both keys are pressed they cancel out.
@@ -176,6 +167,7 @@ fn process_player_input(
             player_input.do_slide = false;
             player_input.do_jump = false;
         }
+        player_input.do_shoot = keyboard.just_pressed(KeyCode::X);  
     }
 }
 
@@ -370,6 +362,19 @@ fn update_player_ground_movement(
     }
 }
 
+fn try_to_shoot(
+    mut command: Commands,
+    query: Query<(Entity, &InputOrders)>
+){
+    for (e_id, orders) in query.iter(){
+        if orders.do_shoot{
+            command.entity(e_id)
+                .insert(ShootGesture{active:true})
+                .insert(ShootElapsed(0.0));
+        }
+    }
+}
+
 fn apply_movement(
     time: Res<Time>,
     mut controller_query: Query<(&CharVelocity, &mut KinematicCharacterController)>
@@ -400,7 +405,7 @@ fn check_ground(
 {
     for (char_id, mut velocity, output, op_ground, op_air) in ground_query.iter_mut(){
         if let Some(_) = op_ground{
-            if !output.grounded { 
+            if !output.grounded || velocity.y > 0.0{ 
                 error!("OnAir");
                 command.entity(char_id).insert(OnAir).remove::<OnGround>(); 
             }
@@ -435,7 +440,6 @@ fn debug_collisions(
     }
 }
 
-
 fn update_action_elapsed(
     time: Res<Time>,
     mut el_query: Query<&mut ActionElapsed>
@@ -445,17 +449,49 @@ fn update_action_elapsed(
     }
 }
 
+fn update_shoot_elapsed(
+    time: Res<Time>,
+    mut el_query: Query<(&mut ShootGesture, &mut ShootElapsed)>
+){
+    for (mut gesture, mut elapsed) in el_query.iter_mut(){
+        if gesture.active{
+            elapsed.0 += time.delta_seconds();
+            if elapsed.0 > 0.25{
+                elapsed.0 = 0.0;
+                gesture.active = false;
+            }
+        }
+    }
+}
+
 fn sync_action_animation(
     mut commands: Commands,
-    mut anim_query: Query<(Entity, &CharacterAction, &ActionAnimations, &mut ActionElapsed), Changed<CharacterAction>>
+    mut anim_query: Query<(Entity, &CharacterAction, &ActionAnimations, &mut ActionElapsed, Option<&ShootGesture>), Changed<CharacterAction>>
 )
 {
-    for (entity_id, action, animation_map, mut elapsed) in anim_query.iter_mut(){
-        error!("{:?}", action);
+    for (entity_id, action, animation_map, mut elapsed, opt_shooted) in anim_query.iter_mut(){
+        error!("sync {:?}", action);
         elapsed.0 = 0.0;
+        let has_shooted = match opt_shooted{
+            Some(v) => v.active,
+            None => false
+        };
         if let Some(anim) = animation_map.map.get(action){
-            commands.entity(entity_id).insert(anim.clone());
+            let mut anim = anim.clone();
+            if has_shooted{ anim.set_alternate("gun") }
+            commands.entity(entity_id).insert(anim);
         }
+    }
+}
+
+fn sync_gun_gesture(
+    mut anim_query: Query<(&mut FrameAnimation, &ShootGesture), Changed<ShootGesture>>
+)
+{
+    for (mut animation, gesture) in anim_query.iter_mut(){
+        error!("Gesture {:?}", gesture.active);
+        if gesture.active{ animation.set_alternate("gun");}
+        else{ animation.default_alter(); }
     }
 }
 
@@ -468,59 +504,6 @@ fn sync_sprite_face_dir(
     }
 }
 
-
-#[derive(Bundle)]
-pub struct CharacterBundle{
-    ssheet: SpriteSheetBundle,
-    body: RigidBody,
-    collision: Collider,
-    controller: KinematicCharacterController,
-    movement: Movement,
-    action: CharacterAction,
-    facing: Facing,
-    animations: ActionAnimations,
-    grounded: OnGround,
-    orders: InputOrders
-}
-
-impl CharacterBundle{
-    pub fn new(name: &str, assets: &Res<PlayerAssets>) -> Self{
-        let atlas_field_name  = format!("{name}_texture");
-        let atlas_field = assets.field(&atlas_field_name).unwrap();
-        let atlas_handle = atlas_field.downcast_ref::<Handle<TextureAtlas>>().unwrap();
-        
-        let ssheet = SpriteSheetBundle{
-            texture_atlas: atlas_handle.clone(),
-            //sprite: TextureAtlasSprite{anchor:bevy::sprite::Anchor::BottomCenter, ..default()},
-            ..default()
-        };
-
-        let mut animations = ActionAnimations{ map: HashMap::new() };
-        animations.map.insert(CharacterAction::Idle, CompAnimation::new_segment(0, 1, 1.0, 0));
-        animations.map.insert(CharacterAction::Running, CompAnimation::new_segment(4, 7, 8.0, 0));
-        animations.map.insert(CharacterAction::Jumping, CompAnimation::new_segment(8, 8, 1.0, 0));
-        animations.map.insert(CharacterAction::Falling, CompAnimation::new_segment(8, 8, 1.0, 0));
-        animations.map.insert(CharacterAction::Sliding, CompAnimation::new_segment( 8, 8, 1.0, 0));
-        
-
-        Self { 
-            ssheet,
-            body: RigidBody::KinematicPositionBased, 
-            //collision: Collider::capsule(Vec2::NEG_Y, Vec2::Y, 3.0),
-            collision: Collider::cuboid(4.0, 6.0), 
-            controller: KinematicCharacterController{
-                offset:CharacterLength::Absolute(0.4),
-                
-                 ..default()},
-            movement: PLAYER_MOV,
-            facing: Facing::Right,
-            action: CharacterAction::Idle,
-            animations,
-            grounded: OnGround,
-            orders: InputOrders::default()
-        }
-    }
-}
 
 #[derive(Bundle)]
 pub struct TinyCharBundle{
@@ -551,23 +534,49 @@ impl TinyCharBundle{
         };
 
         let mut animations = ActionAnimations{ map: HashMap::new() };
-        animations.map.insert(CharacterAction::Idle, CompAnimation::new_segment(0, 1, 1.0, 0));
-        animations.map.insert(CharacterAction::RunStart, CompAnimation::new_segment(4, 4, 1.0, 0));
-        animations.map.insert(CharacterAction::RunEnd, CompAnimation::new_segment(4, 4, 1.0, 0));
-        animations.map.insert(CharacterAction::Running, CompAnimation::new_segment(8, 11, 8.0, 0));
-        animations.map.insert(CharacterAction::Sliding, CompAnimation::new_segment( 12, 12, 1.0, 0));
-        animations.map.insert(CharacterAction::Jumping, CompAnimation::new_segment(16, 16, 1.0, 0));
-        animations.map.insert(CharacterAction::Falling, CompAnimation::new_segment(8, 8, 1.0, 0));
+        animations.map.insert(
+            CharacterAction::Idle, 
+            FrameAnimation::new(0, 2, 1.0, 0)
+                .with_alternate("gun", 20)
+        );
+        animations.map.insert(
+            CharacterAction::RunStart,
+            FrameAnimation::new(4, 1, 1.0, 0)
+                .with_alternate("gun", 20)
+        );
+        animations.map.insert(
+            CharacterAction::RunEnd,
+            FrameAnimation::new(4, 1, 1.0, 0)
+                .with_alternate("gun", 20)
+        );
+        animations.map.insert(
+            CharacterAction::Running,
+            FrameAnimation::new(8, 4, 8.0, 0)
+                .with_alternate("gun", 24)
+        );
+        animations.map.insert(
+            CharacterAction::Sliding,
+            FrameAnimation::new( 12, 1, 1.0, 0)
+                .with_alternate("gun", 12)
+        );
+        animations.map.insert(
+            CharacterAction::Jumping,
+            FrameAnimation::new(16, 1, 1.0, 0)
+                .with_alternate("gun", 28)
+        );
+        animations.map.insert(
+            CharacterAction::Falling,
+            FrameAnimation::new(8, 1, 1.0, 0)
+                .with_alternate("gun", 28)
+        );
         
-        
-
         Self { 
             ssheet,
             body: RigidBody::KinematicPositionBased, 
             //collision: Collider::capsule(Vec2::NEG_Y, Vec2::Y, 3.0),
             collision: Collider::cuboid(4.0, 6.0), 
             controller: KinematicCharacterController{
-                offset:CharacterLength::Absolute(0.4),
+                offset:CharacterLength::Absolute(0.2),
                 
                  ..default()},
             movement: TINYMAN_MOV,
