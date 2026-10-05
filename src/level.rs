@@ -4,7 +4,7 @@ use bevy_ecs_ldtk::prelude::*;
 use bevy_rapier2d::prelude::*;
 
 use crate::GameStates;
-use crate::asset_manager::PlayerAssets;
+use crate::asset_manager::TextureAssets;
 use crate::characters::{TinyCharBundle, Player};
 
 use std::collections::{HashMap, HashSet};
@@ -46,7 +46,7 @@ impl Plugin for LevelPlugin {
 
 fn spawn_player(
     mut commands: Commands,
-    char_assets: Res<PlayerAssets>,
+    char_assets: Res<TextureAssets>,
     start_query: Query<(Entity, &Transform), Added<StartPosition>>
 ){
     if let Ok((start_id, start_transform)) = start_query.get_single(){

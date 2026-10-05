@@ -9,6 +9,7 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 mod asset_manager;
 mod level;
 mod animation;
+mod weapons;
 mod characters;
 
 use asset_manager::AssetManagerPluging;

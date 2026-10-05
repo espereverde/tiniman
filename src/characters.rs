@@ -5,11 +5,11 @@ use std::hash::Hash;
 use bevy::ecs::query;
 use bevy::transform::commands;
 use bevy::{prelude::*, utils::HashMap, transform::TransformSystem};
-use bevy_rapier2d::na::SimdBool;
 use bevy_rapier2d::prelude::*;
 
-use crate::asset_manager::PlayerAssets;
+use crate::asset_manager::TextureAssets;
 use crate::animation::FrameAnimation;
+use crate::weapons::{Weapon, BulletBundle};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, SystemSet)]
 pub enum CharacterSet{
@@ -108,9 +108,9 @@ struct InputOrders{
     do_shoot: bool
 }
 
-#[derive(Debug, Component, Default)]
+#[derive(Debug, Component, Default, Clone)]
 pub struct CharVelocity{
-    x: f32,
+    pub x: f32,
     y: f32
 }
 
@@ -364,13 +364,19 @@ fn update_player_ground_movement(
 
 fn try_to_shoot(
     mut command: Commands,
-    query: Query<(Entity, &InputOrders)>
+    query: Query<(Entity, &InputOrders, &Transform, &Facing,  &mut Weapon)>
 ){
-    for (e_id, orders) in query.iter(){
+    for (e_id, orders, transform,facing, mut weapon) in query.iter(){
         if orders.do_shoot{
-            command.entity(e_id)
-                .insert(ShootGesture{active:true})
-                .insert(ShootElapsed(0.0));
+            let face_dir = match facing {
+                Facing::Left => -1.0,
+                Facing::Right => 1.0
+            };
+            if weapon.try_shoot(&mut command, transform, face_dir){
+                command.entity(e_id)
+                    .insert(ShootGesture{active:true})
+                    .insert(ShootElapsed(0.0));
+            }
         }
     }
 }
@@ -518,12 +524,13 @@ pub struct TinyCharBundle{
     facing: Facing,
     animations: ActionAnimations,
     grounded: OnGround,
-    orders: InputOrders
+    orders: InputOrders,
+    weapon: Weapon
 }
 
 impl TinyCharBundle{
-    pub fn new(name: &str, assets: &Res<PlayerAssets>) -> Self{
-        let atlas_field_name  = format!("{name}_texture");
+    pub fn new(name: &str, assets: &Res<TextureAssets>) -> Self{
+        let atlas_field_name  = format!("{name}");
         let atlas_field = assets.field(&atlas_field_name).unwrap();
         let atlas_handle = atlas_field.downcast_ref::<Handle<TextureAtlas>>().unwrap();
         
@@ -586,7 +593,11 @@ impl TinyCharBundle{
             a_elapsed: ActionElapsed::default(),
             animations,
             grounded: OnGround,
-            orders: InputOrders::default()
+            orders: InputOrders::default(),
+            weapon: Weapon{
+                    offset: Vec2 { x: 8.0, y: 1.0 },
+                    bullets: BulletBundle::new("bullet", assets)
+                }
         }
     }
 }
