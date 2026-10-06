@@ -1,0 +1,3 @@
+[submodule "libs/bsn_blueprints"]
+	path = libs/bsn_blueprints
+	url = https://github.com/espereverde/bsn_blueprints.git

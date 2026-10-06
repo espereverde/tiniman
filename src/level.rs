@@ -1,24 +1,13 @@
-use bevy::log::Level;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy_ecs_ldtk::prelude::*;
 use bevy_rapier2d::prelude::*;
+use bsn_blueprints::{BlueprintEntityCommandsExt, BlueprintFile, BlueprintSet};
 
-use crate::GameStates;
-use crate::asset_manager::TextureAssets;
-use crate::characters::{TinyCharBundle, Player};
-
-use std::collections::{HashMap, HashSet};
-
-const ASPECT_RATIO: f32 = 16. / 9.;
+use crate::blueprints::GameBlueprints;
+use crate::{GameStates, STAGE_SIZE};
 
 pub struct LevelPlugin;
-
-
-/*#[derive(Bundle)]
-pub struct PlayerBundle{
-    player: Player,
-    a_sprite: AnimatedSprite
-}*/
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Component)]
 pub struct Wall;
@@ -30,123 +19,78 @@ pub struct WallBundle {
 
 impl Plugin for LevelPlugin {
     fn build(&self, app: &mut App) {
-        app
-            // Set the background color.
-            .add_plugins(LdtkPlugin)
-            .insert_resource(LevelSelection::Indices(LevelIndices { level: 0, ..default() }))
-            .register_ldtk_entity::<StartPosBundle>("Start_position")
+        app.add_plugins(LdtkPlugin)
+            .insert_resource(LevelSelection::index(0))
             .register_ldtk_int_cell::<WallBundle>(1)
-            .add_systems(Startup, setup_map)
-            .add_systems(OnEnter(GameStates::Running), spawn_player)
-            .add_systems(Update, camera_fit_inside_current_level)
-            .add_systems(Update, spawn_wall_collision)
-            ;
+            .add_systems(OnEnter(GameStates::Running), setup_map)
+            .add_systems(
+                Update,
+                (spawn_entity_blueprints, spawn_wall_collision, camera_fit_level).run_if(in_state(GameStates::Running)),
+            );
     }
-}
-
-fn spawn_player(
-    mut commands: Commands,
-    char_assets: Res<TextureAssets>,
-    start_query: Query<(Entity, &Transform), Added<StartPosition>>
-){
-    if let Ok((start_id, start_transform)) = start_query.get_single(){
-        error!("Player");
-        commands.entity(start_id)
-            .insert(TinyCharBundle::new("tinyman", &char_assets))
-            .insert(Player{})
-            .insert(start_transform.clone());
-    }
-}
-
-#[derive(Default, Component)]
-struct StartPosition();
-
-#[derive(Default, Bundle, LdtkEntity)]
-pub struct StartPosBundle{
-    start: StartPosition,
 }
 
 fn setup_map(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn(LdtkWorldBundle {
-        ldtk_handle: asset_server.load("maps/fire_world.ldtk"),
+        ldtk_handle: asset_server.load("maps/fire_world.ldtk").into(),
         ..Default::default()
     });
 }
 
-#[allow(clippy::type_complexity)]
-pub fn camera_fit_inside_current_level(
-    mut window_query: Query<&mut Window>,
-    mut camera_query: Query<
-        (
-            &mut bevy::render::camera::OrthographicProjection,
-            &mut Transform,
-        ),
-        Without<Player>,
-    >,
-    //player_query: Query<&Transform, With<Player>>,
-    level_query: Query<
-        (&Transform, &LevelIid),
-        (Without<OrthographicProjection>, Without<Player>),
-    >,
-    level_selection: Res<LevelSelection>,
-    projects: Query<&Handle<LdtkProject>>,
-    project_assets: Res<Assets<LdtkProject>>
+/// LDtk entities are placeholders for blueprints: `Start_position` spawns the player, and any
+/// other entity spawns the blueprint with its name in lowercase (`Walker` → `"walker"`), from
+/// whichever blueprint file has it.
+fn spawn_entity_blueprints(
+    mut commands: Commands,
+    blueprints: Res<BlueprintSet<GameBlueprints>>,
+    files: Res<Assets<BlueprintFile>>,
+    instances: Query<(Entity, &EntityInstance), Added<EntityInstance>>,
 ) {
-    /*if let Ok(Transform {
-        translation: player_translation,
-        ..
-    }) = player_query.get_single()
-    {*/
-        //let player_translation = *player_translation;
-        let player_translation = Vec3::ZERO;
-
-
-        let (mut orthographic_projection, mut camera_transform) = camera_query.single_mut();
-
-        for (level_transform, level_iid) in &level_query {
-            let only_project = project_assets.get(projects.single()).unwrap();
-            if let Some(ldtk_level) = only_project.get_raw_level_by_iid(level_iid.get()) {
-                let level = &ldtk_level;
-                if level_selection.is_match(&LevelIndices{level:0, ..default()}, level) {
-
-                    let mut window = window_query.single_mut();
-
-                    let level_ratio = level.px_wid as f32 / level.px_hei as f32;
-                    orthographic_projection.viewport_origin = Vec2::ZERO;
-                    if level_ratio > ASPECT_RATIO {
-                        // level is wider than the screen
-                        //let height = (level.px_hei as f32 / 9.).round() * 9.;
-                        let height = level.px_hei as f32;
-                        let width = height * ASPECT_RATIO;
-                        window.resolution.set(width*2.0, height*2.0);
-                        orthographic_projection.scaling_mode =
-                            bevy::render::camera::ScalingMode::Fixed { width, height };
-                        camera_transform.translation.x =
-                            (player_translation.x - level_transform.translation.x - width / 2.)
-                                .clamp(0., level.px_wid as f32 - width);
-                        camera_transform.translation.y = 0.;
-                    } else {
-                        // level is taller than the screen
-                        //let width = (level.px_wid as f32 / 16.).round() * 16.;
-                        let width = level.px_wid as f32;
-                        let height = width / ASPECT_RATIO;
-                        window.resolution.set(width*2.0, height*2.0);
-                        orthographic_projection.scaling_mode =
-                            bevy::render::camera::ScalingMode::Fixed { width, height };
-                        camera_transform.translation.y =
-                            (player_translation.y - level_transform.translation.y - height / 2.)
-                                .clamp(0., level.px_hei as f32 - height);
-                        camera_transform.translation.x = 0.;
-                    }
-
-                    camera_transform.translation.x += level_transform.translation.x;
-                    camera_transform.translation.y += level_transform.translation.y;
+    for (entity, instance) in &instances {
+        let label = match instance.identifier.as_str() {
+            "Start_position" => "tinyman".to_string(),
+            other => other.to_lowercase(),
+        };
+        let file = ["characters", "enemies", "props"]
+            .into_iter()
+            .map(|name| &blueprints[name])
+            .find(|handle| files.get(*handle).is_some_and(|loaded| loaded.get(&label).is_some()));
+        match file {
+            Some(handle) => {
+                commands.entity(entity).insert_blueprint(handle, label);
             }
+            None => warn!("LDtk entity `{}` has no blueprint `{label}`", instance.identifier),
         }
     }
 }
 
-/// Spawns heron collisions for the walls of a level
+/// The whole stage fits on screen: center the camera on the level and scale it to fit.
+fn camera_fit_level(
+    mut camera: Query<(&mut Projection, &mut Transform), With<Camera2d>>,
+    levels: Query<(&GlobalTransform, &LevelIid), Added<LevelIid>>,
+    ldtk_projects: Query<&LdtkProjectHandle>,
+    ldtk_project_assets: Res<Assets<LdtkProject>>,
+) -> Result {
+    for (level_transform, level_iid) in &levels {
+        let Some(project) = ldtk_project_assets.get(ldtk_projects.single()?) else { continue };
+        let Some(level) = project.get_raw_level_by_iid(&level_iid.to_string()) else { continue };
+        let size = Vec2::new(level.px_wid as f32, level.px_hei as f32);
+        if size != STAGE_SIZE {
+            warn!("Level `{}` is {size}, not a single {STAGE_SIZE} screen", level.identifier);
+        }
+
+        let (mut projection, mut camera_transform) = camera.single_mut()?;
+        if let Projection::Orthographic(orthographic) = &mut *projection {
+            orthographic.scaling_mode =
+                bevy::camera::ScalingMode::AutoMin { min_width: size.x, min_height: size.y };
+        }
+        let center = level_transform.translation().truncate() + size / 2.0;
+        camera_transform.translation = center.extend(camera_transform.translation.z);
+    }
+    Ok(())
+}
+
+/// Spawns rapier collisions for the walls of a level
 ///
 /// You could just insert a ColliderBundle in to the WallBundle,
 /// but this spawns a different collider for EVERY wall tile.
@@ -164,12 +108,12 @@ pub fn camera_fit_inside_current_level(
 /// 4. spawn colliders for each rectangle
 pub fn spawn_wall_collision(
     mut commands: Commands,
-    wall_query: Query<(&GridCoords, &Parent), Added<Wall>>,
-    parent_query: Query<&Parent, Without<Wall>>,
+    wall_query: Query<(&GridCoords, &ChildOf), Added<Wall>>,
+    parent_query: Query<&ChildOf, Without<Wall>>,
     level_query: Query<(Entity, &LevelIid)>,
-    projects: Query<&Handle<LdtkProject>>,
-    project_assets: Res<Assets<LdtkProject>>
-) {
+    ldtk_projects: Query<&LdtkProjectHandle>,
+    ldtk_project_assets: Res<Assets<LdtkProject>>,
+) -> Result {
     /// Represents a wide wall that is 1 tile tall
     /// Used to spawn wall collisions
     #[derive(Clone, Eq, PartialEq, Debug, Default, Hash)]
@@ -186,6 +130,10 @@ pub fn spawn_wall_collision(
         bottom: i32,
     }
 
+    if wall_query.is_empty() {
+        return Ok(());
+    }
+
     // Consider where the walls are
     // storing them as GridCoords in a HashSet for quick, easy lookup
     //
@@ -195,121 +143,100 @@ pub fn spawn_wall_collision(
     // 2. it lets us easily add the collision entities as children of the appropriate level entity
     let mut level_to_wall_locations: HashMap<Entity, HashSet<GridCoords>> = HashMap::new();
 
-    wall_query.for_each(|(&grid_coords, parent)| {
+    for (&grid_coords, child_of) in &wall_query {
         // An intgrid tile's direct parent will be a layer entity, not the level entity
         // To get the level entity, you need the tile's grandparent.
         // This is where parent_query comes in.
-        if let Ok(grandparent) = parent_query.get(parent.get()) {
+        if let Ok(grandparent) = parent_query.get(child_of.parent()) {
             level_to_wall_locations
-                .entry(grandparent.get())
+                .entry(grandparent.parent())
                 .or_default()
                 .insert(grid_coords);
         }
-    });
+    }
 
-    if !wall_query.is_empty() {
-        let only_project = project_assets.get(projects.single()).unwrap();
-        level_query.for_each(|(level_entity, level_iid)| {
-            if let Some(level_walls) = level_to_wall_locations.get(&level_entity) {
-                let level = only_project
-                    .get_raw_level_by_iid(level_iid.get())
-                    .expect("Level should be loaded by this point");
+    let ldtk_project = ldtk_project_assets
+        .get(ldtk_projects.single()?)
+        .expect("Project should be loaded if level has spawned");
 
-                let LayerInstance {
-                    c_wid: width,
-                    c_hei: height,
-                    grid_size,
-                    ..
-                } = level
-                    .layer_instances
-                    .clone()
-                    .expect("Level asset should have layers")[0];
+    for (level_entity, level_iid) in &level_query {
+        let Some(level_walls) = level_to_wall_locations.get(&level_entity) else { continue };
+        let level = ldtk_project
+            .as_standalone()
+            .get_loaded_level_by_iid(&level_iid.to_string())
+            .expect("Spawned level should exist in LDtk project");
 
-                // combine wall tiles into flat "plates" in each individual row
-                let mut plate_stack: Vec<Vec<Plate>> = Vec::new();
+        let LayerInstance { c_wid: width, c_hei: height, grid_size, .. } = level.layer_instances()[0];
 
-                for y in 0..height {
-                    let mut row_plates: Vec<Plate> = Vec::new();
-                    let mut plate_start = None;
+        // combine wall tiles into flat "plates" in each individual row
+        let mut plate_stack: Vec<Vec<Plate>> = Vec::new();
 
-                    // + 1 to the width so the algorithm "terminates" plates that touch the right edge
-                    for x in 0..width + 1 {
-                        match (plate_start, level_walls.contains(&GridCoords { x, y })) {
-                            (Some(s), false) => {
-                                row_plates.push(Plate {
-                                    left: s,
-                                    right: x - 1,
-                                });
-                                plate_start = None;
-                            }
-                            (None, true) => plate_start = Some(x),
-                            _ => (),
-                        }
+        for y in 0..height {
+            let mut row_plates: Vec<Plate> = Vec::new();
+            let mut plate_start = None;
+
+            // + 1 to the width so the algorithm "terminates" plates that touch the right edge
+            for x in 0..width + 1 {
+                match (plate_start, level_walls.contains(&GridCoords { x, y })) {
+                    (Some(s), false) => {
+                        row_plates.push(Plate { left: s, right: x - 1 });
+                        plate_start = None;
                     }
-
-                    plate_stack.push(row_plates);
+                    (None, true) => plate_start = Some(x),
+                    _ => (),
                 }
+            }
 
-                // combine "plates" into rectangles across multiple rows
-                let mut rect_builder: HashMap<Plate, Rect> = HashMap::new();
-                let mut prev_row: Vec<Plate> = Vec::new();
-                let mut wall_rects: Vec<Rect> = Vec::new();
+            plate_stack.push(row_plates);
+        }
 
-                // an extra empty row so the algorithm "finishes" the rects that touch the top edge
-                plate_stack.push(Vec::new());
+        // combine "plates" into rectangles across multiple rows
+        let mut rect_builder: HashMap<Plate, Rect> = HashMap::new();
+        let mut prev_row: Vec<Plate> = Vec::new();
+        let mut wall_rects: Vec<Rect> = Vec::new();
 
-                for (y, current_row) in plate_stack.into_iter().enumerate() {
-                    for prev_plate in &prev_row {
-                        if !current_row.contains(prev_plate) {
-                            // remove the finished rect so that the same plate in the future starts a new rect
-                            if let Some(rect) = rect_builder.remove(prev_plate) {
-                                wall_rects.push(rect);
-                            }
-                        }
+        // an extra empty row so the algorithm "finishes" the rects that touch the top edge
+        plate_stack.push(Vec::new());
+
+        for (y, current_row) in plate_stack.into_iter().enumerate() {
+            for prev_plate in &prev_row {
+                if !current_row.contains(prev_plate) {
+                    // remove the finished rect so that the same plate in the future starts a new rect
+                    if let Some(rect) = rect_builder.remove(prev_plate) {
+                        wall_rects.push(rect);
                     }
-                    for plate in &current_row {
-                        rect_builder
-                            .entry(plate.clone())
-                            .and_modify(|e| e.top += 1)
-                            .or_insert(Rect {
-                                bottom: y as i32,
-                                top: y as i32,
-                                left: plate.left,
-                                right: plate.right,
-                            });
-                    }
-                    prev_row = current_row;
                 }
+            }
+            for plate in &current_row {
+                rect_builder
+                    .entry(plate.clone())
+                    .and_modify(|e| e.top += 1)
+                    .or_insert(Rect { bottom: y as i32, top: y as i32, left: plate.left, right: plate.right });
+            }
+            prev_row = current_row;
+        }
 
-                commands.entity(level_entity).with_children(|level| {
-                    // Spawn colliders for every rectangle..
-                    // Making the collider a child of the level serves two purposes:
-                    // 1. Adjusts the transforms to be relative to the level for free
-                    // 2. the colliders will be despawned automatically when levels unload
-                    for wall_rect in wall_rects {
-                        level
-                            .spawn_empty()
-                            .insert(Collider::cuboid(
-                                (wall_rect.right as f32 - wall_rect.left as f32 + 1.)
-                                    * grid_size as f32
-                                    / 2.,
-                                (wall_rect.top as f32 - wall_rect.bottom as f32 + 1.)
-                                    * grid_size as f32
-                                    / 2.,
-                            ))
-                            .insert(RigidBody::Fixed)
-                            .insert(Friction::new(1.0))
-                            .insert(Transform::from_xyz(
-                                (wall_rect.left + wall_rect.right + 1) as f32 * grid_size as f32
-                                    / 2.,
-                                (wall_rect.bottom + wall_rect.top + 1) as f32 * grid_size as f32
-                                    / 2.,
-                                0.,
-                            ))
-                            .insert(GlobalTransform::default());
-                    }
-                });
+        commands.entity(level_entity).with_children(|level| {
+            // Spawn colliders for every rectangle..
+            // Making the collider a child of the level serves two purposes:
+            // 1. Adjusts the transforms to be relative to the level for free
+            // 2. the colliders will be despawned automatically when levels unload
+            for wall_rect in wall_rects {
+                level.spawn((
+                    Collider::cuboid(
+                        (wall_rect.right as f32 - wall_rect.left as f32 + 1.) * grid_size as f32 / 2.,
+                        (wall_rect.top as f32 - wall_rect.bottom as f32 + 1.) * grid_size as f32 / 2.,
+                    ),
+                    RigidBody::Fixed,
+                    Friction::new(1.0),
+                    Transform::from_xyz(
+                        (wall_rect.left + wall_rect.right + 1) as f32 * grid_size as f32 / 2.,
+                        (wall_rect.bottom + wall_rect.top + 1) as f32 * grid_size as f32 / 2.,
+                        0.,
+                    ),
+                ));
             }
         });
     }
+    Ok(())
 }

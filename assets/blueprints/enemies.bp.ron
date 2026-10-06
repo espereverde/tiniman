@@ -1,0 +1,147 @@
+// Enemies. An LDtk entity named e.g. `Walker` spawns the blueprint labelled "walker".
+//
+// Perception (see src/perception.rs) decides when an enemy notices the player:
+//   sight_range / fov   vision cone in front of the enemy, blocked by walls
+//   feel_range          always noticed this close, whatever the facing
+//   hearing             multiplier on noise radii (shots, landings, fallen allies)
+//   notice_time         seconds of continuous sight, at the edge of the cone, to become alert
+//                       (closer is faster)
+//   memory              seconds an alerted enemy keeps chasing after losing sight
+//   search_time         seconds spent looking around the last known position
+//   alarm_radius        allies within it become alert too when this one does
+//   blind_when_unaware  sleeping enemies: only feel and hearing wake them up
+//
+// Ranges are rolled on every spawn, so two walkers never see exactly alike.
+{
+    "enemy": (
+        components: {
+            "Enemy": (death_noise: 40.0),
+            "Team": Enemy,
+            "Facing": Left,
+            "ContactDamage": (2),
+            "SpriteSheet": (
+                image: Path("/sprites/enemies.png"),
+                tile_size: (16, 16),
+                columns: 4,
+                rows: 4,
+                padding: (2, 2),
+            ),
+            "Perception": (
+                sight_range: 72.0,
+                fov: 100.0,
+                eye: (x: 2.0, y: 2.0),
+                hearing: 1.0,
+                feel_range: 14.0,
+                notice_time: 0.8,
+                memory: 2.5,
+                search_time: 3.0,
+                alarm_radius: 0.0,
+                blind_when_unaware: false,
+            ),
+        },
+        children: {
+            // "?" / "!" over the head. Hidden while unaware.
+            "awareness_icon": (
+                components: {
+                    "Name": "Awareness icon",
+                    "AwarenessIcon": (),
+                    "Transform": (translation: (x: 0.0, y: 11.0, z: 1.0)),
+                    "Visibility": Hidden,
+                    "SpriteSheet": (
+                        image: Path("/sprites/enemies.png"),
+                        tile_size: (16, 16),
+                        columns: 4,
+                        rows: 4,
+                        padding: (2, 2),
+                        index: 12,
+                    ),
+                },
+            ),
+        },
+    ),
+
+    // Patrols back and forth; runs at the player once alerted, and shouts to nearby allies.
+    "walker": (
+        extends: "#enemy",
+        components: {
+            "Name": "Walker",
+            "Health": (hp: 3, max: 3),
+            "KinematicBody": (half_size: (x: 4.0, y: 5.0)),
+            "Walker": (patrol_speed: 14.0, chase_speed: 34.0, patrol_range: 40.0, gravity: 450.0, look_period: 1.5),
+            "Perception": (
+                sight_range: Range(64.0, 88.0),
+                notice_time: Range(0.6, 1.0),
+                alarm_radius: 96.0,
+            ),
+            "AnimationSet": (clips: {
+                "idle":  (start: 0, frames: 1, fps: 1.0),
+                "walk":  (start: 0, frames: 2, fps: 4.0),
+                "alert": (start: 2, frames: 2, fps: 10.0),
+            }),
+        },
+    ),
+
+    // A walker that doesn't patrol: it stands guard and turns around every few seconds.
+    "guard": (
+        extends: "#walker",
+        components: {
+            "Name": "Guard",
+            "Walker": (patrol_speed: 0.0, look_period: OneOf([2.0, 3.0, 4.0])),
+        },
+    ),
+
+    // Mega Man's Met: shielded under its helmet while unaware, peeks when suspicious, opens
+    // and fires a spread of pellets once alerted. Only vulnerable while open.
+    "sentry": (
+        extends: "#enemy",
+        components: {
+            "Name": "Sentry",
+            "Health": (hp: 2, max: 2),
+            "KinematicBody": (half_size: (x: 5.0, y: 3.0)),
+            "Facing": Right,
+            "Sentry": (open_time: 1.2, closed_time: 1.4, burst: 3, spread: 25.0),
+            "Perception": (
+                sight_range: Range(80.0, 104.0),
+                fov: 140.0,
+                eye: (x: 2.0, y: 0.0),
+                hearing: 0.6,
+                memory: 1.5,
+            ),
+            "WeaponRecipe": (bullet: Path("weapons.bp.ron#pellet"), offset: (x: 4.0, y: 2.0), cooldown: 0.0, max_on_screen: 6),
+            "AnimationSet": (clips: {
+                "idle":   (start: 4, frames: 1, fps: 1.0),   // closed
+                "peek":   (start: 5, frames: 1, fps: 1.0),
+                "open":   (start: 6, frames: 1, fps: 1.0),
+                "shoot":  (start: 7, frames: 1, fps: 1.0),
+            }),
+        },
+    ),
+
+    // Sleeps hanging from the ceiling: blind until something wakes it up, but it hears well.
+    // Flies straight at the player, and back to its perch when it gives up.
+    "bat": (
+        extends: "#enemy",
+        components: {
+            "Name": "Bat",
+            "Health": (hp: 1, max: 1),
+            "KinematicBody": (half_size: (x: 5.0, y: 4.0)),
+            "Flyer": (speed: Range(26.0, 34.0), return_speed: 20.0),
+            "ContactDamage": (1),
+            "Perception": (
+                sight_range: 96.0,
+                fov: 360.0,
+                hearing: Range(1.2, 1.6),
+                feel_range: 20.0,
+                notice_time: 0.3,
+                memory: 1.5,
+                search_time: 1.5,
+                blind_when_unaware: true,
+            ),
+            "AnimationSet": (clips: {
+                "idle":  (start: 8,  frames: 1, fps: 1.0),  // asleep
+                "fly":   (start: 9,  frames: 2, fps: 6.0),
+                "alert": (start: 11, frames: 1, fps: 1.0),
+            }),
+        },
+    ),
+}

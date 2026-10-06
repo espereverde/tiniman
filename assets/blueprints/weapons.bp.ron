@@ -1,0 +1,25 @@
+// Projectiles. Weapons refer to these with `Path("weapons.bp.ron#label")`.
+{
+    "buster_shot": (
+        components: {
+            "Name": "Buster shot",
+            "Bullet": (speed: 90.0, damage: 1, lifetime: 2.0, radius: 2.0),
+            "SpriteSheet": (image: Path("/sprites/bullets.png"), tile_size: (8, 8), columns: 1, rows: 1),
+        },
+    ),
+
+    "pellet": (
+        components: {
+            "Name": "Pellet",
+            "Bullet": (speed: 60.0, damage: 2, lifetime: 3.0, radius: 2.0),
+            "SpriteSheet": (
+                image: Path("/sprites/enemies.png"),
+                tile_size: (16, 16),
+                columns: 4,
+                rows: 4,
+                padding: (2, 2),
+                index: 14,
+            ),
+        },
+    ),
+}

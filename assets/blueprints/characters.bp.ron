@@ -1,0 +1,50 @@
+// Playable characters. Spawned on LDtk `Start_position` entities.
+{
+    "tinyman": (
+        components: {
+            "Name": "Tinyman",
+            "Player": (),
+            "Team": Player,
+            "Health": (hp: 8, max: 8),
+            "KinematicBody": (half_size: (x: 4.0, y: 6.0)),
+            "MoveStyle": (
+                walk_speed: 41.3,
+                start_delay: 0.1,
+                brake_delay: 0.1,
+                brake_speed: 0.0,
+                slide_speed: 82.6,
+                slide_duration: 0.333,
+                jump_impulse: 146.0,
+                jump_h_speed: 41.3,
+                gravity_acc: 450.0,
+                terminal_vel: 210.0,
+            ),
+            "SpriteSheet": (
+                image: Path("/sprites/tinyman.png"),
+                tile_size: (16, 16),
+                columns: 4,
+                rows: 8,
+                padding: (2, 2),
+            ),
+            // Clip names match `CharacterAction::clip_name`. "gun" is the shooting variant.
+            "AnimationSet": (clips: {
+                "idle":      (start: 0,  frames: 2, fps: 1.0, alternates: { "gun": 20 }),
+                "run_start": (start: 4,  frames: 1, fps: 1.0, alternates: { "gun": 20 }),
+                "run_end":   (start: 4,  frames: 1, fps: 1.0, alternates: { "gun": 20 }),
+                "running":   (start: 8,  frames: 4, fps: 8.0, alternates: { "gun": 24 }),
+                "sliding":   (start: 12, frames: 1, fps: 1.0, alternates: { "gun": 12 }),
+                "jumping":   (start: 16, frames: 1, fps: 1.0, alternates: { "gun": 28 }),
+                "falling":   (start: 16, frames: 1, fps: 1.0, alternates: { "gun": 28 }),
+            }),
+            // Mega Man rule: at most 3 buster shots on screen. Every shot is loud enough
+            // to wake up whoever is near.
+            "WeaponRecipe": (
+                bullet: Path("weapons.bp.ron#buster_shot"),
+                offset: (x: 8.0, y: 1.0),
+                cooldown: 0.1,
+                max_on_screen: 3,
+                noise: 64.0,
+            ),
+        },
+    ),
+}
